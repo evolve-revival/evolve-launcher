@@ -12,8 +12,8 @@
     "windows": [
       {
         "title": "Evolve Revival",
-        "width": 520,
-        "height": 380,
+        "width": 800,
+        "height": 520,
         "resizable": false,
         "center": true,
         "decorations": true

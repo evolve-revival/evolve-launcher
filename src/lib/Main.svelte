@@ -1,7 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import type { Config } from '../types';
 
   let { onSettings }: { onSettings: () => void } = $props();
 
@@ -12,23 +10,17 @@
   let playerCount = $state(0);
   let filesVerified = $state(true);
 
-  let gameExeSet = $state(false);
   let launching = $state(false);
   let launchError = $state('');
 
   const canPlay = $derived(
-    (status === 'online' || status === 'degraded') && filesVerified && gameExeSet
+    (status === 'online' || status === 'degraded') && filesVerified
   );
 
   const dotColor = $derived(
     status === 'online'    ? '#4ade80' :
     status === 'degraded'  ? '#fbbf24' : '#ef4444'
   );
-
-  onMount(async () => {
-    const cfg = await invoke<Config>('get_config');
-    gameExeSet = cfg.game_exe !== '';
-  });
 
   async function play() {
     launchError = '';
@@ -63,10 +55,6 @@
       OFFLINE
     {/if}
   </div>
-
-  {#if !gameExeSet}
-    <div class="hint">Set game path in Settings to enable play</div>
-  {/if}
 
   {#if launchError}
     <div class="launch-error">{launchError}</div>
