@@ -275,10 +275,30 @@ body {
 }
 .dir-browse-btn:hover { border-color: #555; color: #ddd; }
 
+.disk-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 320px;
+}
+
 .disk-hint {
   font-size: 10px;
   color: #444;
 }
+
+.customize-btn {
+  background: none;
+  border: none;
+  color: #e94560;
+  font-size: 10px;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.customize-btn:hover { color: #ff6b84; }
 
 .install-btn {
   width: 200px;

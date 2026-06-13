@@ -18,6 +18,8 @@ pub fn run() {
             commands::save_config,
             commands::check_install_state,
             commands::check_for_updates,
+            commands::get_components,
+            commands::save_components,
             commands::start_install,
             commands::pause_install,
             commands::resume_install,

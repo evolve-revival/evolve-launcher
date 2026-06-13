@@ -3,6 +3,15 @@ export interface Config {
   server_url: string;
 }
 
+export interface Component {
+  id: string;
+  name: string;
+  description: string;
+  required: boolean;
+  enabled: boolean;
+  size_bytes: number;
+}
+
 export interface InstallStatus {
   state: AppState;
   install_dir: string;
