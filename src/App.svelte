@@ -2,18 +2,20 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
-  import type { AppState, InstallStatus } from './types';
+  import type { AppState, InstallStatus, Tier } from './types';
   import Main from './lib/Main.svelte';
   import Settings from './lib/Settings.svelte';
   import InstallView from './lib/InstallView.svelte';
+  import TierView from './lib/TierView.svelte';
   import ProgressView from './lib/ProgressView.svelte';
   import ComponentsView from './lib/ComponentsView.svelte';
 
-  type View = 'main' | 'settings' | 'components';
+  type View = 'main' | 'settings' | 'tiers' | 'components';
 
   let appState = $state<AppState>('not-installed');
   let view = $state<View>('main');
   let installDir = $state('');
+  let selectedTier = $state<Tier | null>(null);
   let selectedBytes = $state<number | null>(null);
 
   onMount(async () => {
@@ -26,7 +28,6 @@
     await listen('install-paused',   () => { appState = 'paused'; });
     await listen('install-error',    () => { appState = installDir ? 'paused' : 'not-installed'; });
 
-    // Check for updates in background once ready
     if (appState === 'ready') {
       invoke<boolean>('check_for_updates').then(hasUpdate => {
         if (hasUpdate) appState = 'update-available';
@@ -51,22 +52,36 @@
     appState = 'repairing';
   }
 
+  function onTierSaved(tier: Tier) {
+    selectedTier = tier;
+    selectedBytes = tier.size_bytes;
+    view = 'main';
+  }
+
   function onComponentsSaved(totalBytes: number) {
+    selectedTier = null;
     selectedBytes = totalBytes;
     view = 'main';
   }
 </script>
 
 {#if appState === 'not-installed'}
-  {#if view === 'components'}
-    <ComponentsView
+  {#if view === 'tiers'}
+    <TierView
       onBack={() => (view = 'main')}
+      onAdvanced={() => (view = 'components')}
+      onSaved={onTierSaved}
+    />
+  {:else if view === 'components'}
+    <ComponentsView
+      onBack={() => (view = 'tiers')}
       onSaved={onComponentsSaved}
     />
   {:else}
     <InstallView
       onInstallStart={onInstallStart}
-      onCustomize={() => (view = 'components')}
+      onChooseTier={() => (view = 'tiers')}
+      {selectedTier}
       {selectedBytes}
     />
   {/if}

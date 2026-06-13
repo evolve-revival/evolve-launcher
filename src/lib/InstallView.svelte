@@ -1,10 +1,12 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { open } from '@tauri-apps/plugin-dialog';
+  import type { Tier } from '../types';
 
-  let { onInstallStart, onCustomize, selectedBytes }: {
+  let { onInstallStart, onChooseTier, selectedTier, selectedBytes }: {
     onInstallStart: (dir: string) => void;
-    onCustomize: () => void;
+    onChooseTier: () => void;
+    selectedTier: Tier | null;
     selectedBytes: number | null;
   } = $props();
 
@@ -16,7 +18,15 @@
   }
 
   const diskHint = $derived(
-    selectedBytes !== null ? `~${fmtGb(selectedBytes)} required` : '~41 GB required'
+    selectedTier
+      ? `${selectedTier.name}  —  ~${fmtGb(selectedTier.size_bytes)}`
+      : selectedBytes !== null
+      ? `Custom  —  ~${fmtGb(selectedBytes)}`
+      : '~41 GB required'
+  );
+
+  const chooseBtnLabel = $derived(
+    selectedTier !== null || selectedBytes !== null ? 'Change' : 'Choose'
   );
 
   async function browseDir() {
@@ -59,7 +69,7 @@
 
   <div class="disk-row">
     <span class="disk-hint">{diskHint}</span>
-    <button class="customize-btn" onclick={onCustomize}>Customize</button>
+    <button class="customize-btn" onclick={onChooseTier}>{chooseBtnLabel}</button>
   </div>
 
   <button class="install-btn" onclick={install} disabled={installing || !installDir.trim()}>

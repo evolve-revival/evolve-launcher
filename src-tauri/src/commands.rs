@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::downloader::{fetch_manifest, run_downloads, DownloadState};
-use crate::install::{Component, InstallRecord, ProgressRecord};
+use crate::install::{apply_perf_config, Component, InstallRecord, ProgressRecord, Tier};
 use crate::patcher::apply_patches;
 use reqwest::Client;
 use std::path::PathBuf;
@@ -143,6 +143,48 @@ pub fn save_components(app: AppHandle, selected: Vec<String>) -> Result<(), Stri
     cfg.save(&app)
 }
 
+// ── Tier selection ────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+pub struct TierState {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub components: Vec<String>,
+    pub size_bytes: u64,
+    pub recommended: bool,
+    pub selected: bool,
+}
+
+#[tauri::command]
+pub async fn get_tiers(app: AppHandle) -> Result<Vec<TierState>, String> {
+    let cfg = Config::load(&app);
+    let client = Client::new();
+    let manifest = fetch_manifest(&client).await?;
+
+    Ok(manifest
+        .tiers
+        .iter()
+        .map(|t: &Tier| TierState {
+            id: t.id.clone(),
+            name: t.name.clone(),
+            description: t.description.clone(),
+            components: t.components.clone(),
+            size_bytes: manifest.tier_size(t),
+            recommended: t.recommended,
+            selected: cfg.selected_tier.as_deref() == Some(t.id.as_str()),
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub fn save_tier(app: AppHandle, tier_id: String, components: Vec<String>) -> Result<(), String> {
+    let mut cfg = Config::load(&app);
+    cfg.selected_tier = Some(tier_id);
+    cfg.selected_components = Some(components);
+    cfg.save(&app)
+}
+
 // ── Install ───────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -204,6 +246,14 @@ pub async fn start_install(
         if let Err(e) = apply_patches(&client, &manifest, &dir, &server_url, cancelled).await {
             let _ = app_clone.emit("install-error", e);
             return;
+        }
+
+        if let Some(ref tier_id) = cfg_now.selected_tier {
+            if let Some(tier) = manifest.tiers.iter().find(|t| t.id == *tier_id) {
+                if let Err(e) = apply_perf_config(&dir, &tier.perf_config) {
+                    eprintln!("Warning: could not apply tier perf config: {}", e);
+                }
+            }
         }
 
         let record = InstallRecord {
@@ -301,6 +351,14 @@ pub async fn start_repair(
         if let Err(e) = apply_patches(&client, &manifest, &dir, &server_url, cancelled).await {
             let _ = app_clone.emit("install-error", e);
             return;
+        }
+
+        if let Some(ref tier_id) = cfg_now.selected_tier {
+            if let Some(tier) = manifest.tiers.iter().find(|t| t.id == *tier_id) {
+                if let Err(e) = apply_perf_config(&dir, &tier.perf_config) {
+                    eprintln!("Warning: could not apply tier perf config: {}", e);
+                }
+            }
         }
 
         let record = InstallRecord {

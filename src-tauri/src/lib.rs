@@ -20,6 +20,8 @@ pub fn run() {
             commands::check_for_updates,
             commands::get_components,
             commands::save_components,
+            commands::get_tiers,
+            commands::save_tier,
             commands::start_install,
             commands::pause_install,
             commands::resume_install,

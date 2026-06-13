@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -20,6 +20,17 @@ fn default_component_id() -> String {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Tier {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub components: Vec<String>,
+    pub recommended: bool,
+    #[serde(default)]
+    pub perf_config: HashMap<String, String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ManifestFile {
     pub path: String,
     pub size: u64,
@@ -35,6 +46,8 @@ pub struct Manifest {
     pub base_url: String,
     #[serde(default)]
     pub components: Vec<Component>,
+    #[serde(default)]
+    pub tiers: Vec<Tier>,
     pub files: Vec<ManifestFile>,
     pub patches: Vec<ManifestFile>,
 }
@@ -77,6 +90,14 @@ impl Manifest {
             .collect()
     }
 
+    pub fn tier_size(&self, tier: &Tier) -> u64 {
+        tier.components
+            .iter()
+            .filter_map(|cid| self.components.iter().find(|c| c.id == *cid))
+            .map(|c| c.size_bytes)
+            .sum()
+    }
+
     /// Compute total selected bytes (for display before download starts).
     pub fn selected_bytes(&self, selected: &Option<Vec<String>>) -> u64 {
         if self.components.is_empty() {
@@ -85,6 +106,32 @@ impl Manifest {
         let files = self.filter_by_selection(selected);
         files.iter().map(|f| f.size).sum()
     }
+}
+
+// ── Perf config writer ────────────────────────────────────────────────────
+
+/// Merge `config` key=value pairs into `<install_dir>/system.cfg`.
+/// Existing lines for a key are replaced; missing keys are appended.
+pub fn apply_perf_config(install_dir: &Path, config: &HashMap<String, String>) -> Result<(), String> {
+    if config.is_empty() {
+        return Ok(());
+    }
+    let path = install_dir.join("system.cfg");
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    let mut lines: Vec<String> = existing.lines().map(|l| l.to_string()).collect();
+
+    for (key, value) in config {
+        let new_line = format!("{} = {}", key, value);
+        match lines.iter().position(|l| {
+            let t = l.trim();
+            t.starts_with(key.as_str()) && t[key.len()..].trim_start().starts_with('=')
+        }) {
+            Some(pos) => lines[pos] = new_line,
+            None => lines.push(new_line),
+        }
+    }
+
+    fs::write(&path, lines.join("\n")).map_err(|e| e.to_string())
 }
 
 // ── Install record ────────────────────────────────────────────────────────

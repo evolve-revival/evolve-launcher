@@ -9,6 +9,8 @@ pub struct Config {
     #[serde(default = "default_server_url")]
     pub server_url: String,
     #[serde(default)]
+    pub selected_tier: Option<String>,
+    #[serde(default)]
     pub selected_components: Option<Vec<String>>,
 }
 
@@ -21,6 +23,7 @@ impl Default for Config {
         Self {
             install_dir: String::new(),
             server_url: default_server_url(),
+            selected_tier: None,
             selected_components: None,
         }
     }
@@ -61,6 +64,7 @@ mod tests {
         let cfg = Config {
             install_dir: "/home/user/Games/Evolve".to_string(),
             server_url: "http://example.com:8080".to_string(),
+            selected_tier: Some("recommended".to_string()),
             selected_components: None,
         };
         let json = serde_json::to_string(&cfg).unwrap();
