@@ -238,6 +238,15 @@ pub async fn start_repair(
             return;
         }
 
+        let record = InstallRecord {
+            version: manifest.version.clone(),
+            build: manifest.build,
+        };
+        if let Err(e) = record.save(&dir) {
+            let _ = app_clone.emit("install-error", e);
+            return;
+        }
+
         ProgressRecord::delete(&dir);
         let _ = app_clone.emit("repair-complete", ());
     });
@@ -253,6 +262,9 @@ pub async fn start_update(
     state: State<'_, AppDownloadState>,
 ) -> Result<(), String> {
     let cfg = Config::load(&app);
+    if cfg.install_dir.is_empty() {
+        return Err("No install directory configured".to_string());
+    }
     start_install(app, cfg.install_dir, state).await
 }
 
