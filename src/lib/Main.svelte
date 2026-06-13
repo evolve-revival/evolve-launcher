@@ -1,15 +1,18 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
+  import type { AppState } from '../types';
 
-  let { onSettings }: { onSettings: () => void } = $props();
+  let { appState, onSettings, onRepair }: {
+    appState: AppState;
+    onSettings: () => void;
+    onRepair: () => void;
+  } = $props();
 
   type Status = 'checking' | 'online' | 'degraded' | 'offline';
 
-  // Stubs — replaced by real polling in later tasks
   let status = $state<Status>('online');
   let playerCount = $state(0);
   let filesVerified = $state(true);
-
   let launching = $state(false);
   let launchError = $state('');
 
@@ -18,8 +21,8 @@
   );
 
   const dotColor = $derived(
-    status === 'online'    ? '#4ade80' :
-    status === 'degraded'  ? '#fbbf24' : '#ef4444'
+    status === 'online'   ? '#4ade80' :
+    status === 'degraded' ? '#fbbf24' : '#ef4444'
   );
 
   async function play() {
@@ -33,6 +36,11 @@
       launching = false;
     }
   }
+
+  async function update() {
+    await invoke('start_update');
+    onRepair();
+  }
 </script>
 
 <div class="launcher">
@@ -42,6 +50,13 @@
     <span class="title-main">EVOLVE</span>
     <span class="title-sub">REVIVAL</span>
   </div>
+
+  {#if appState === 'update-available'}
+    <div class="update-banner">
+      Update available
+      <button class="update-btn" onclick={update}>UPDATE</button>
+    </div>
+  {/if}
 
   <div class="status-row">
     <span class="dot" style="background: {dotColor}; color: {dotColor}"></span>
@@ -72,6 +87,9 @@
         <span class="cross">✗</span>Files not verified
       {/if}
     </span>
-    <button class="settings-btn" onclick={onSettings}>Settings</button>
+    <div style="display:flex; gap:14px; align-items:center;">
+      <button class="repair-btn" onclick={async () => { await invoke('start_repair'); onRepair(); }}>Repair</button>
+      <button class="settings-btn" onclick={onSettings}>Settings</button>
+    </div>
   </div>
 </div>
