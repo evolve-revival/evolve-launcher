@@ -7,12 +7,14 @@
   import Settings from './lib/Settings.svelte';
   import InstallView from './lib/InstallView.svelte';
   import ProgressView from './lib/ProgressView.svelte';
+  import ComponentsView from './lib/ComponentsView.svelte';
 
-  type View = 'main' | 'settings';
+  type View = 'main' | 'settings' | 'components';
 
   let appState = $state<AppState>('not-installed');
   let view = $state<View>('main');
   let installDir = $state('');
+  let selectedBytes = $state<number | null>(null);
 
   onMount(async () => {
     const status = await invoke<InstallStatus>('check_install_state');
@@ -48,10 +50,26 @@
   function onRepair() {
     appState = 'repairing';
   }
+
+  function onComponentsSaved(totalBytes: number) {
+    selectedBytes = totalBytes;
+    view = 'main';
+  }
 </script>
 
 {#if appState === 'not-installed'}
-  <InstallView onInstallStart={onInstallStart} />
+  {#if view === 'components'}
+    <ComponentsView
+      onBack={() => (view = 'main')}
+      onSaved={onComponentsSaved}
+    />
+  {:else}
+    <InstallView
+      onInstallStart={onInstallStart}
+      onCustomize={() => (view = 'components')}
+      {selectedBytes}
+    />
+  {/if}
 {:else if appState === 'downloading' || appState === 'repairing' || appState === 'paused'}
   <ProgressView
     {appState}

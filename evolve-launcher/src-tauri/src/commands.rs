@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::downloader::{fetch_manifest, run_downloads, DownloadState};
-use crate::install::{InstallRecord, ProgressRecord};
+use crate::install::{Component, InstallRecord, ProgressRecord};
 use crate::patcher::apply_patches;
 use reqwest::Client;
 use std::path::PathBuf;
@@ -86,6 +86,63 @@ pub async fn check_for_updates(app: AppHandle) -> Result<bool, String> {
     Ok(manifest.build > record.build)
 }
 
+// ── Component selection ───────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+pub struct ComponentState {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub required: bool,
+    pub enabled: bool,
+    pub size_bytes: u64,
+}
+
+impl ComponentState {
+    fn from_component(c: &Component, enabled: bool) -> Self {
+        Self {
+            id: c.id.clone(),
+            name: c.name.clone(),
+            description: c.description.clone(),
+            required: c.required,
+            enabled,
+            size_bytes: c.size_bytes,
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn get_components(app: AppHandle) -> Result<Vec<ComponentState>, String> {
+    let cfg = Config::load(&app);
+    let client = Client::new();
+    let manifest = fetch_manifest(&client).await?;
+
+    if manifest.components.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let selected = &cfg.selected_components;
+    let result = manifest
+        .components
+        .iter()
+        .map(|c| {
+            let enabled = match selected {
+                None => c.required || c.default_enabled,
+                Some(ids) => c.required || ids.contains(&c.id),
+            };
+            ComponentState::from_component(c, enabled)
+        })
+        .collect();
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn save_components(app: AppHandle, selected: Vec<String>) -> Result<(), String> {
+    let mut cfg = Config::load(&app);
+    cfg.selected_components = Some(selected);
+    cfg.save(&app)
+}
+
 // ── Install ───────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -119,12 +176,14 @@ pub async fn start_install(
             }
         };
 
-        let server_url = Config::load(&app_clone).server_url;
+        let cfg_now = Config::load(&app_clone);
+        let server_url = cfg_now.server_url;
+        let selected_files = manifest.filter_by_selection(&cfg_now.selected_components);
 
         match run_downloads(
             app_clone.clone(),
             client.clone(),
-            manifest.files.clone(),
+            selected_files,
             manifest.base_url.clone(),
             dir.clone(),
             cancelled.clone(),
@@ -215,10 +274,13 @@ pub async fn start_repair(
         // Repair: clear progress record so all files get re-downloaded
         ProgressRecord::delete(&dir);
 
+        let cfg_now = Config::load(&app_clone);
+        let selected_files = manifest.filter_by_selection(&cfg_now.selected_components);
+
         match run_downloads(
             app_clone.clone(),
             client.clone(),
-            manifest.files.clone(),
+            selected_files,
             manifest.base_url.clone(),
             dir.clone(),
             cancelled.clone(),

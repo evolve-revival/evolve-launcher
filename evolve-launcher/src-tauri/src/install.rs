@@ -6,10 +6,26 @@ use std::path::Path;
 // ── Manifest ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Component {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub required: bool,
+    pub default_enabled: bool,
+    pub size_bytes: u64,
+}
+
+fn default_component_id() -> String {
+    "core".to_string()
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ManifestFile {
     pub path: String,
     pub size: u64,
     pub sha256: String,
+    #[serde(default = "default_component_id")]
+    pub component: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -17,8 +33,58 @@ pub struct Manifest {
     pub version: String,
     pub build: u64,
     pub base_url: String,
+    #[serde(default)]
+    pub components: Vec<Component>,
     pub files: Vec<ManifestFile>,
     pub patches: Vec<ManifestFile>,
+}
+
+impl Manifest {
+    /// Return files that should be downloaded given a component selection.
+    /// - If the manifest has no component definitions, returns all files.
+    /// - Required components are always included regardless of `selected`.
+    /// - `selected = None` means "not yet customized" → use `default_enabled` per component.
+    pub fn filter_by_selection(&self, selected: &Option<Vec<String>>) -> Vec<ManifestFile> {
+        if self.components.is_empty() {
+            return self.files.clone();
+        }
+
+        let required: HashSet<&str> = self
+            .components
+            .iter()
+            .filter(|c| c.required)
+            .map(|c| c.id.as_str())
+            .collect();
+
+        let enabled: HashSet<&str> = match selected {
+            None => self
+                .components
+                .iter()
+                .filter(|c| c.required || c.default_enabled)
+                .map(|c| c.id.as_str())
+                .collect(),
+            Some(ids) => ids
+                .iter()
+                .map(|s| s.as_str())
+                .chain(required.iter().copied())
+                .collect(),
+        };
+
+        self.files
+            .iter()
+            .filter(|f| enabled.contains(f.component.as_str()))
+            .cloned()
+            .collect()
+    }
+
+    /// Compute total selected bytes (for display before download starts).
+    pub fn selected_bytes(&self, selected: &Option<Vec<String>>) -> u64 {
+        if self.components.is_empty() {
+            return self.files.iter().map(|f| f.size).sum();
+        }
+        let files = self.filter_by_selection(selected);
+        files.iter().map(|f| f.size).sum()
+    }
 }
 
 // ── Install record ────────────────────────────────────────────────────────
