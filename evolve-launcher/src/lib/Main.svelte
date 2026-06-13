@@ -44,24 +44,23 @@
 </script>
 
 <div class="launcher">
+  <span class="version-badge">v0.1.0</span>
+
+  <div class="title-block">
+    <span class="title-main">EVOLVE</span>
+    <span class="title-sub">REVIVAL</span>
+  </div>
+
   <div class="status-row">
     <span class="dot" style="background: {dotColor}; color: {dotColor}"></span>
     {#if status === 'online'}
-      ONLINE &nbsp; {playerCount} players
+      ONLINE &nbsp;·&nbsp; {playerCount} players
     {:else if status === 'degraded'}
-      DEGRADED &nbsp; {playerCount} players
+      DEGRADED &nbsp;·&nbsp; {playerCount} players
     {:else if status === 'checking'}
       CHECKING...
     {:else}
       OFFLINE
-    {/if}
-  </div>
-
-  <div class="verify-row">
-    {#if filesVerified}
-      <span class="check">✓</span>Game files verified
-    {:else}
-      <span class="cross">✗</span>Files not verified
     {/if}
   </div>
 
@@ -78,7 +77,13 @@
   </button>
 
   <div class="footer">
-    <span class="version">v0.1.0</span>
+    <span class="verify-status">
+      {#if filesVerified}
+        <span class="check">✓</span>Files verified
+      {:else}
+        <span class="cross">✗</span>Files not verified
+      {/if}
+    </span>
     <button class="settings-btn" onclick={onSettings}>Settings</button>
   </div>
 </div>
