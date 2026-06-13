@@ -12,6 +12,16 @@ export interface Component {
   size_bytes: number;
 }
 
+export interface Tier {
+  id: string;
+  name: string;
+  description: string;
+  components: string[];
+  size_bytes: number;
+  recommended: boolean;
+  selected: boolean;
+}
+
 export interface InstallStatus {
   state: AppState;
   install_dir: string;
