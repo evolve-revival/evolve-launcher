@@ -86,8 +86,10 @@ pub async fn download_file(
     url: &str,
     dest: &Path,
     expected_sha256: &str,
+    cancelled: Arc<AtomicBool>,
 ) -> Result<(), String> {
-    let tmp = dest.with_extension("tmp");
+    // Fix 5: append .tmp rather than replacing extension to avoid collisions
+    let tmp = PathBuf::from(format!("{}.tmp", dest.display()));
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)
             .await
@@ -109,7 +111,13 @@ pub async fn download_file(
     let mut hasher = Sha256::new();
     let mut stream = response.bytes_stream();
 
+    // Fix 3: check cancelled inside the streaming loop for fast mid-stream pause
     while let Some(chunk) = stream.next().await {
+        if cancelled.load(Ordering::Relaxed) {
+            drop(file);
+            let _ = fs::remove_file(&tmp).await;
+            return Err("paused".to_string());
+        }
         let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
         hasher.update(&chunk);
         file.write_all(&chunk)
@@ -142,16 +150,23 @@ pub async fn download_with_retry(
     url: &str,
     dest: &Path,
     sha256: &str,
+    cancelled: Arc<AtomicBool>,
 ) -> Result<(), String> {
     let mut last_err = String::new();
     for attempt in 1..=MAX_RETRIES {
-        match download_file(client, url, dest, sha256).await {
+        match download_file(client, url, dest, sha256, cancelled.clone()).await {
             Ok(()) => return Ok(()),
             Err(e) => {
                 last_err = e;
-                if attempt < MAX_RETRIES {
-                    tokio::time::sleep(std::time::Duration::from_secs(attempt as u64)).await;
+                // Fix 4: don't retry on SHA-256 mismatch (wrong content from server)
+                // Fix 3: don't retry on pause/cancel
+                if last_err == "paused"
+                    || last_err.contains("SHA-256 mismatch")
+                    || attempt == MAX_RETRIES
+                {
+                    break;
                 }
+                tokio::time::sleep(std::time::Duration::from_secs(attempt as u64)).await;
             }
         }
     }
@@ -184,7 +199,8 @@ pub async fn run_downloads(
         .collect();
 
     let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT));
-    let mut handles = Vec::new();
+    // Fix 2: use JoinSet so we can abort_all() on error instead of detaching tasks
+    let mut join_set = tokio::task::JoinSet::new();
     let start = Instant::now();
 
     for file in pending {
@@ -204,15 +220,15 @@ pub async fn run_downloads(
         let total_bytes = total_bytes;
         let start = start;
         let cancelled = cancelled.clone();
-        let install_dir = install_dir.clone();
 
-        let handle = tokio::spawn(async move {
+        // Fix 1: task returns the path string so the orchestrator can call mark_complete
+        join_set.spawn(async move {
             let _permit = permit;
             if cancelled.load(Ordering::SeqCst) {
                 return Err("paused".to_string());
             }
 
-            download_with_retry(&client, &url, &dest, &sha256).await?;
+            download_with_retry(&client, &url, &dest, &sha256, cancelled).await?;
 
             let done = downloaded.fetch_add(size, Ordering::SeqCst) + size;
             let elapsed = start.elapsed().as_secs_f64().max(0.001);
@@ -231,17 +247,30 @@ pub async fn run_downloads(
                 },
             );
 
-            let mut prog = ProgressRecord::load(&install_dir);
-            prog.mark_complete(&path, &install_dir)?;
-
-            Ok::<(), String>(())
+            // Return path for the orchestrator to mark_complete serially (Fix 1)
+            Ok::<String, String>(path)
         });
-
-        handles.push(handle);
     }
 
-    for handle in handles {
-        handle.await.map_err(|e| e.to_string())??;
+    // Fix 1 + Fix 2: load progress once, mark_complete serially as tasks finish.
+    // join_next() returns tasks as they complete (out of order), which is ideal.
+    let mut progress = ProgressRecord::load(&install_dir);
+    while let Some(result) = join_set.join_next().await {
+        match result {
+            Err(e) => {
+                // JoinError (task panicked or was aborted)
+                join_set.abort_all();
+                return Err(e.to_string());
+            }
+            Ok(Err(e)) => {
+                // Task returned an application error
+                join_set.abort_all();
+                return Err(e);
+            }
+            Ok(Ok(completed_path)) => {
+                progress.mark_complete(&completed_path, &install_dir)?;
+            }
+        }
     }
 
     Ok(())
