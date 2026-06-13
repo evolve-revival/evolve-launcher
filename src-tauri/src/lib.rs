@@ -2,6 +2,7 @@ mod commands;
 mod config;
 mod install;
 mod downloader;
+mod patcher;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
