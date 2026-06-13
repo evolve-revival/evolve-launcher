@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
@@ -46,7 +47,7 @@ impl InstallRecord {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ProgressRecord {
-    pub completed: Vec<String>,
+    pub completed: HashSet<String>,
 }
 
 impl ProgressRecord {
@@ -58,20 +59,20 @@ impl ProgressRecord {
     }
 
     pub fn save(&self, install_dir: &Path) -> Result<(), String> {
+        fs::create_dir_all(install_dir).map_err(|e| e.to_string())?;
         let json = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
         fs::write(install_dir.join("progress.json"), json).map_err(|e| e.to_string())
     }
 
     pub fn mark_complete(&mut self, path: &str, install_dir: &Path) -> Result<(), String> {
-        if !self.completed.contains(&path.to_string()) {
-            self.completed.push(path.to_string());
+        if self.completed.insert(path.to_string()) {
             self.save(install_dir)?;
         }
         Ok(())
     }
 
     pub fn is_complete(&self, path: &str) -> bool {
-        self.completed.iter().any(|p| p == path)
+        self.completed.contains(path)
     }
 
     pub fn delete(install_dir: &Path) {
