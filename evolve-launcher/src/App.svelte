@@ -61,5 +61,9 @@
 {:else if view === 'settings'}
   <Settings onBack={() => (view = 'main')} />
 {:else}
-  <Main onSettings={() => (view = 'settings')} />
+  <Main
+    {appState}
+    onSettings={() => (view = 'settings')}
+    onRepair={onRepair}
+  />
 {/if}
