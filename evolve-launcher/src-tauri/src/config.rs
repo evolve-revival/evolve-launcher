@@ -5,7 +5,7 @@ use tauri::Manager;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     #[serde(default)]
-    pub game_exe: String,
+    pub install_dir: String,
     #[serde(default = "default_server_url")]
     pub server_url: String,
 }
@@ -17,7 +17,7 @@ fn default_server_url() -> String {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            game_exe: String::new(),
+            install_dir: String::new(),
             server_url: default_server_url(),
         }
     }
@@ -47,21 +47,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_config_has_empty_exe_and_default_url() {
+    fn default_config_has_empty_install_dir_and_default_url() {
         let cfg = Config::default();
-        assert_eq!(cfg.game_exe, "");
+        assert_eq!(cfg.install_dir, "");
         assert_eq!(cfg.server_url, "http://localhost:8080");
     }
 
     #[test]
     fn config_round_trips_through_json() {
         let cfg = Config {
-            game_exe: "C:\\Evolve\\Evolve.exe".to_string(),
+            install_dir: "/home/user/Games/Evolve".to_string(),
             server_url: "http://example.com:8080".to_string(),
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let back: Config = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.game_exe, cfg.game_exe);
+        assert_eq!(back.install_dir, cfg.install_dir);
         assert_eq!(back.server_url, cfg.server_url);
     }
 
@@ -69,7 +69,7 @@ mod tests {
     fn missing_fields_use_defaults_on_deserialize() {
         let json = r#"{}"#;
         let cfg: Config = serde_json::from_str(json).unwrap();
-        assert_eq!(cfg.game_exe, "");
+        assert_eq!(cfg.install_dir, "");
         assert_eq!(cfg.server_url, "http://localhost:8080");
     }
 }
