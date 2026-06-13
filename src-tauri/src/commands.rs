@@ -18,7 +18,10 @@ pub fn get_config(app: AppHandle) -> Config {
 
 #[tauri::command]
 pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
-    config.save(&app)
+    // Load first so install_dir (and any other fields not sent by the frontend) are preserved
+    let mut existing = Config::load(&app);
+    existing.server_url = config.server_url;
+    existing.save(&app)
 }
 
 // ── Install state ─────────────────────────────────────────────────────────

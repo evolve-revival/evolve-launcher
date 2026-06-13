@@ -208,6 +208,15 @@ pub async fn run_downloads(
             return Err("paused".to_string());
         }
 
+        // Guard against path traversal attacks via a compromised manifest
+        if std::path::Path::new(&file.path).is_absolute() {
+            return Err(format!("Manifest contains absolute path: {}", file.path));
+        }
+        let dest_check = install_dir.join(&file.path);
+        if !dest_check.starts_with(&install_dir) {
+            return Err(format!("Manifest path escapes install dir: {}", file.path));
+        }
+
         let permit = semaphore.clone().acquire_owned().await.unwrap();
         let client = client.clone();
         let url = format!("{}{}", base_url, file.path);

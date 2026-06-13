@@ -43,8 +43,15 @@ pub async fn apply_patches(
     cancelled: Arc<AtomicBool>,
 ) -> Result<(), String> {
     for patch in &manifest.patches {
-        let url = format!("{}{}", manifest.base_url, patch.path);
+        // Guard against path traversal attacks via a compromised manifest
+        if std::path::Path::new(&patch.path).is_absolute() {
+            return Err(format!("Manifest contains absolute patch path: {}", patch.path));
+        }
         let dest = install_dir.join(&patch.path);
+        if !dest.starts_with(install_dir) {
+            return Err(format!("Manifest patch path escapes install dir: {}", patch.path));
+        }
+        let url = format!("{}{}", manifest.base_url, patch.path);
         download_with_retry(client, &url, &dest, &patch.sha256, cancelled.clone()).await?;
     }
 

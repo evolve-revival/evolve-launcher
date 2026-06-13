@@ -4,7 +4,7 @@
 
   let { onInstallStart }: { onInstallStart: (dir: string) => void } = $props();
 
-  let installDir = $state('/home/navitank/Games/Evolve');
+  let installDir = $state('');
   let installing = $state(false);
 
   async function browseDir() {
