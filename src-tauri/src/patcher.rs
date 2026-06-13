@@ -1,5 +1,5 @@
 use crate::downloader::download_with_retry;
-use crate::install::{Manifest, ProgressRecord};
+use crate::install::Manifest;
 use reqwest::Client;
 use std::path::Path;
 use std::sync::Arc;
@@ -49,6 +49,7 @@ pub async fn apply_patches(
     }
 
     // Generate and write EvolveLogging.ini
+    std::fs::create_dir_all(install_dir).map_err(|e| e.to_string())?;
     let ini_content = generate_logging_ini(server_url);
     let ini_path = install_dir.join("EvolveLogging.ini");
     std::fs::write(&ini_path, ini_content)
