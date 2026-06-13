@@ -17,7 +17,10 @@ pub fn launch_game(app: tauri::AppHandle) -> Result<(), String> {
     if cfg.game_exe.is_empty() {
         return Err("Game executable path is not configured — open Settings first".to_string());
     }
-    Command::new(&cfg.game_exe)
+    let exe_path = std::path::Path::new(&cfg.game_exe);
+    let cwd = exe_path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    Command::new(exe_path)
+        .current_dir(cwd)
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("Failed to launch {}: {}", cfg.game_exe, e))
