@@ -2,7 +2,9 @@
 
 body {
   font-family: 'Segoe UI', system-ui, sans-serif;
-  background: #0f0f1a;
+  background-image: url('/bg.png');
+  background-size: cover;
+  background-position: center top;
   color: #e0e0e0;
   height: 100vh;
   overflow: hidden;
@@ -14,21 +16,60 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 22px;
+  justify-content: flex-end;
+  padding-bottom: 52px;
+  gap: 14px;
   height: 100vh;
-  padding: 24px;
   position: relative;
+  background: linear-gradient(
+    to top,
+    rgba(6, 4, 10, 0.97) 0%,
+    rgba(6, 4, 10, 0.82) 38%,
+    transparent 65%
+  );
+}
+
+.version-badge {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.2);
+  pointer-events: none;
+}
+
+.title-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.title-main {
+  font-size: 28px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.title-sub {
+  font-size: 11px;
+  font-weight: 600;
+  color: #f97316;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
 }
 
 .status-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  color: #c0c0cc;
 }
 
 .dot {
@@ -39,29 +80,21 @@ body {
   box-shadow: 0 0 6px currentColor;
 }
 
-.verify-row {
-  font-size: 13px;
-  color: #90909a;
-}
-
-.check { color: #4ade80; margin-right: 4px; }
-.cross { color: #ef4444; margin-right: 4px; }
-
 .hint {
   font-size: 11px;
-  color: #555;
+  color: #555566;
 }
 
 .launch-error {
   font-size: 11px;
   color: #ef4444;
-  max-width: 280px;
+  max-width: 300px;
   text-align: center;
 }
 
 .play-btn {
-  width: 160px;
-  padding: 13px 0;
+  width: 200px;
+  height: 44px;
   background: #e94560;
   color: #fff;
   font-size: 15px;
@@ -70,14 +103,17 @@ body {
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: opacity 0.15s, box-shadow 0.15s;
 }
 .play-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-.play-btn:not(:disabled):hover { opacity: 0.82; }
+.play-btn:not(:disabled):hover {
+  opacity: 0.9;
+  box-shadow: 0 0 20px rgba(233, 69, 96, 0.4);
+}
 
 .footer {
   position: absolute;
-  bottom: 16px;
+  bottom: 14px;
   left: 16px;
   right: 16px;
   display: flex;
@@ -85,19 +121,23 @@ body {
   align-items: center;
 }
 
-.version { font-size: 11px; color: #444; }
+.verify-status {
+  font-size: 11px;
+  color: #555566;
+}
+.verify-status .check { color: #4ade80; margin-right: 4px; }
+.verify-status .cross { color: #ef4444; margin-right: 4px; }
 
 .settings-btn {
   background: none;
-  border: 1px solid #333;
-  color: #666;
-  padding: 4px 10px;
-  border-radius: 3px;
+  border: none;
+  color: #555566;
+  padding: 4px 0;
   cursor: pointer;
   font-size: 11px;
-  transition: border-color 0.15s, color 0.15s;
+  transition: color 0.15s;
 }
-.settings-btn:hover { border-color: #666; color: #ccc; }
+.settings-btn:hover { color: #ccccdd; }
 
 /* ── Settings view ──────────────────────────── */
 .settings {
@@ -106,6 +146,8 @@ body {
   gap: 18px;
   padding: 24px;
   height: 100vh;
+  background: rgba(6, 4, 10, 0.96);
+  backdrop-filter: blur(4px);
 }
 
 .settings-title {
