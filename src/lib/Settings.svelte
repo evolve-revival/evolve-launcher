@@ -18,7 +18,7 @@
     saving = true;
     try {
       await invoke('save_config', {
-        config: { game_exe: '', server_url: serverUrl },
+        config: { server_url: serverUrl },
       });
       saved = true;
       setTimeout(() => {
