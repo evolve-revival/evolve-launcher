@@ -89,7 +89,7 @@ pub fn probe_stun(relay_host: &str, relay_port: u16) -> Result<NatInfo, String> 
     })
 }
 
-// ── Proxy stub (implemented in Task 6) ───────────────────────────────────
+// ── Proxy ─────────────────────────────────────────────────────────────────
 
 pub struct ProxyHandle {
     pub shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -102,13 +102,121 @@ impl ProxyHandle {
     }
 }
 
-pub async fn start_proxy(
-    _relay_host: String,
-    _relay_port: u16,
-) -> Result<ProxyHandle, String> {
-    Ok(ProxyHandle {
-        shutdown: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    })
+/// Start a local UDP proxy on 127.0.0.1:47584.
+///
+/// Goldberg's custom_broadcasts.txt points here. The proxy forwards all
+/// Goldberg packets to the VPS relay and delivers packets from relay/peers
+/// back to Goldberg. When the relay sends a "PUNCH <addr>" signal the proxy
+/// fires a hole-punch UDP to that address and records it as a direct peer for
+/// future packets.
+pub async fn start_proxy(relay_host: String, relay_port: u16) -> Result<ProxyHandle, String> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    // Bind local socket for Goldberg.
+    let local = Arc::new(
+        tokio::net::UdpSocket::bind("127.0.0.1:47584")
+            .await
+            .map_err(|e| format!("Proxy: cannot bind 127.0.0.1:47584 — {e}"))?,
+    );
+
+    // Bind outbound socket (any port) for relay + direct peers.
+    let relay_sock = Arc::new(
+        tokio::net::UdpSocket::bind("0.0.0.0:0")
+            .await
+            .map_err(|e| format!("Proxy: relay socket bind failed — {e}"))?,
+    );
+
+    let relay_addr: std::net::SocketAddr = format!("{relay_host}:{relay_port}")
+        .parse()
+        .map_err(|e| format!("Proxy: invalid relay addr — {e}"))?;
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+
+    // Shared state between the two tasks.
+    let goldberg_addr: Arc<Mutex<Option<std::net::SocketAddr>>> = Arc::new(Mutex::new(None));
+    let direct_peers: Arc<Mutex<Vec<std::net::SocketAddr>>> = Arc::new(Mutex::new(Vec::new()));
+
+    // ── Task A: local → relay/direct ──────────────────────────────────────
+    {
+        let local_r = Arc::clone(&local);
+        let relay_w = Arc::clone(&relay_sock);
+        let ga_w = Arc::clone(&goldberg_addr);
+        let dp_r = Arc::clone(&direct_peers);
+        let sd = Arc::clone(&shutdown);
+
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; 65507];
+            while !sd.load(Ordering::Relaxed) {
+                let Ok((n, from)) = local_r.recv_from(&mut buf).await else {
+                    break;
+                };
+                *ga_w.lock().unwrap() = Some(from);
+
+                let packet = buf[..n].to_vec();
+                let peers = dp_r.lock().unwrap().clone();
+
+                if peers.is_empty() {
+                    // No direct peers yet — send to relay.
+                    let _ = relay_w.send_to(&packet, relay_addr).await;
+                } else {
+                    // Direct path: send to every known peer.
+                    for peer in &peers {
+                        let _ = relay_w.send_to(&packet, peer).await;
+                    }
+                }
+            }
+        });
+    }
+
+    // ── Task B: relay/direct → local ──────────────────────────────────────
+    {
+        let relay_r = Arc::clone(&relay_sock);
+        let local_w = Arc::clone(&local);
+        let ga_r = Arc::clone(&goldberg_addr);
+        let dp_w = Arc::clone(&direct_peers);
+        let sd = Arc::clone(&shutdown);
+
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; 65507];
+            while !sd.load(Ordering::Relaxed) {
+                let Ok((n, from)) = relay_r.recv_from(&mut buf).await else {
+                    break;
+                };
+
+                // Detect PUNCH signal from relay: "PUNCH <ip>:<port>"
+                if n > 6 && &buf[..6] == b"PUNCH " {
+                    let addr_str = std::str::from_utf8(&buf[6..n])
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    if let Ok(peer_addr) = addr_str.parse::<std::net::SocketAddr>() {
+                        // Fire hole-punch packet to open NAT path.
+                        let _ = relay_r.send_to(b"PUNCH_ACK", peer_addr).await;
+                        dp_w.lock().unwrap().push(peer_addr);
+                    }
+                    continue;
+                }
+
+                // Ignore PUNCH_ACK confirmations from peers.
+                if n == 9 && &buf[..9] == b"PUNCH_ACK" {
+                    let mut peers = dp_w.lock().unwrap();
+                    if !peers.contains(&from) {
+                        peers.push(from);
+                    }
+                    continue;
+                }
+
+                // Game packet — forward to Goldberg.
+                let ga_addr = *ga_r.lock().unwrap();
+                if let Some(ga) = ga_addr {
+                    let _ = local_w.send_to(&buf[..n], ga).await;
+                }
+            }
+        });
+    }
+
+    Ok(ProxyHandle { shutdown })
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
