@@ -109,7 +109,15 @@ impl ProxyHandle {
 /// back to Goldberg. When the relay sends a "PUNCH <addr>" signal the proxy
 /// fires a hole-punch UDP to that address and records it as a direct peer for
 /// future packets.
-pub async fn start_proxy(relay_host: String, relay_port: u16) -> Result<ProxyHandle, String> {
+///
+/// Returns `(ProxyHandle, Option<SocketAddr>)` where the second value is the
+/// external endpoint of the relay socket as seen by the STUN server (useful
+/// for peer registration). It is `None` if the STUN probe through the relay
+/// socket fails.
+pub async fn start_proxy(
+    relay_host: String,
+    relay_port: u16,
+) -> Result<(ProxyHandle, Option<std::net::SocketAddr>), String> {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -127,9 +135,34 @@ pub async fn start_proxy(relay_host: String, relay_port: u16) -> Result<ProxyHan
             .map_err(|e| format!("Proxy: relay socket bind failed — {e}"))?,
     );
 
-    let relay_addr: std::net::SocketAddr = format!("{relay_host}:{relay_port}")
-        .parse()
-        .map_err(|e| format!("Proxy: invalid relay addr — {e}"))?;
+    // Fix 2: resolve hostname via DNS instead of .parse() (which only works
+    // for numeric IPs).
+    let relay_addr = tokio::net::lookup_host(format!("{relay_host}:{relay_port}"))
+        .await
+        .map_err(|e| format!("Proxy: DNS resolution failed — {e}"))?
+        .next()
+        .ok_or_else(|| "Proxy: relay hostname resolved to nothing".to_string())?;
+
+    // Fix 4: send a STUN probe through the relay socket *before* spawning the
+    // forwarding tasks so neither task steals our response.  This gives us the
+    // actual external endpoint of the relay socket rather than the ephemeral
+    // socket used by probe_stun().
+    let relay_external: Option<std::net::SocketAddr> = {
+        let stun_req = build_binding_request();
+        relay_sock.send_to(&stun_req, relay_addr).await.ok();
+
+        let mut stun_buf = [0u8; 512];
+        match tokio::time::timeout(
+            tokio::time::Duration::from_secs(4),
+            relay_sock.recv_from(&mut stun_buf),
+        )
+        .await
+        {
+            Ok(Ok((n, _))) => parse_xor_mapped_address(&stun_buf[..n])
+                .and_then(|(ip, port)| format!("{ip}:{port}").parse().ok()),
+            _ => None,
+        }
+    };
 
     let shutdown = Arc::new(AtomicBool::new(false));
 
@@ -216,7 +249,7 @@ pub async fn start_proxy(relay_host: String, relay_port: u16) -> Result<ProxyHan
         });
     }
 
-    Ok(ProxyHandle { shutdown })
+    Ok((ProxyHandle { shutdown }, relay_external))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────

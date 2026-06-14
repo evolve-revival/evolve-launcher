@@ -9,6 +9,8 @@ use tauri::{AppHandle, Emitter, State};
 
 pub struct AppDownloadState(pub Mutex<DownloadState>);
 
+pub struct ProxyState(pub Mutex<Option<crate::nat::ProxyHandle>>);
+
 // ── Config commands ───────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -432,7 +434,10 @@ pub fn get_nat_type(app: AppHandle) -> crate::nat::NatInfo {
 // ── Launch ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn launch_game(app: AppHandle) -> Result<(), String> {
+pub async fn launch_game(
+    app: AppHandle,
+    proxy_state: State<'_, ProxyState>,
+) -> Result<(), String> {
     let cfg = Config::load(&app);
     if cfg.install_dir.is_empty() {
         return Err("Game is not installed".to_string());
@@ -440,20 +445,41 @@ pub async fn launch_game(app: AppHandle) -> Result<(), String> {
 
     let exe = PathBuf::from(&cfg.install_dir).join("bin64_SteamRetail/Evolve.exe");
 
-    // Start local UDP proxy before game launch so Goldberg can connect to it.
-    let relay_host = crate::patcher::extract_host(&cfg.server_url);
-    let proxy = crate::nat::start_proxy(relay_host.clone(), 47584).await?;
+    // Fix 1: stop any previously running proxy before creating a new one.
+    // Drop the guard before the await so the MutexGuard (which is !Send) does
+    // not cross an await point.
+    let old = { proxy_state.0.lock().unwrap().take() };
+    if let Some(old) = old {
+        old.stop();
+        // Give tasks a moment to release the socket.
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
 
-    // Register our external endpoint with the relay so other peers can punch.
-    if let Ok(nat_info) = crate::nat::probe_stun(&relay_host, 47584) {
+    // Start local UDP proxy before game launch so Goldberg can connect to it.
+    // Fix 4: start_proxy now returns the external endpoint of the relay socket
+    // via an inline STUN probe, avoiding the double-probe problem with
+    // symmetric NATs.
+    let relay_host = crate::patcher::extract_host(&cfg.server_url);
+    let (proxy, relay_external) = crate::nat::start_proxy(relay_host, 47584).await?;
+
+    // Fix 1: store proxy handle in managed state.
+    {
+        let mut guard = proxy_state.0.lock().unwrap();
+        *guard = Some(proxy);
+    }
+
+    // Fix 3 + Fix 4: register external endpoint using the relay socket's
+    // actual external address (not a separate ephemeral probe socket).
+    // session_id now includes both IP and port for uniqueness.
+    if let Some(ext) = relay_external {
         let client = reqwest::Client::new();
-        let session_id = format!("launcher-{}", nat_info.external_port);
+        let session_id = format!("launcher-{}-{}", ext.ip(), ext.port());
         let _ = client
             .post(format!("{}/peers/register", cfg.server_url))
             .json(&serde_json::json!({
                 "id": session_id,
-                "ip": nat_info.external_ip,
-                "port": nat_info.external_port,
+                "ip": ext.ip().to_string(),
+                "port": ext.port(),
             }))
             .send()
             .await;
@@ -494,8 +520,12 @@ pub async fn launch_game(app: AppHandle) -> Result<(), String> {
         }
     };
 
+    // On launch failure, stop and remove the proxy from state.
     if result.is_err() {
-        proxy.stop();
+        let mut guard = proxy_state.0.lock().unwrap();
+        if let Some(p) = guard.take() {
+            p.stop();
+        }
     }
     // On success: proxy keeps running until the launcher exits.
     result

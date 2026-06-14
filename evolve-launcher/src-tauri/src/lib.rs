@@ -6,7 +6,7 @@ mod nat;
 mod patcher;
 mod steam;
 
-use commands::AppDownloadState;
+use commands::{AppDownloadState, ProxyState};
 use downloader::DownloadState;
 use std::sync::Mutex;
 
@@ -15,6 +15,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppDownloadState(Mutex::new(DownloadState::default())))
+        .manage(ProxyState(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::save_config,
