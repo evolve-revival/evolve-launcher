@@ -35,6 +35,8 @@ pub fn run() {
             commands::add_to_steam,
             commands::check_donor_game,
             commands::open_steam_store,
+            commands::get_versions,
+            commands::switch_version,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
