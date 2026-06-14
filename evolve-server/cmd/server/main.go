@@ -5,6 +5,7 @@ import (
 
 	"github.com/evolve-revival/evolve-server/internal/config"
 	"github.com/evolve-revival/evolve-server/internal/db"
+	"github.com/evolve-revival/evolve-server/internal/relay"
 )
 
 func main() {
@@ -19,6 +20,13 @@ func main() {
 	if err := db.Migrate(pool); err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
+
+	// Start UDP relay for Goldberg peer discovery alongside the HTTP server.
+	go func() {
+		if err := relay.New().Run(":" + cfg.RelayPort); err != nil {
+			log.Fatalf("relay: %v", err)
+		}
+	}()
 
 	r := buildRouterWithDeps(cfg, pool)
 
