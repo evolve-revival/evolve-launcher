@@ -7,17 +7,11 @@ use std::sync::atomic::AtomicBool;
 
 /// Parse the hostname from a URL like "https://host:port/path" → "host"
 pub fn extract_host(url: &str) -> String {
-    // Strip scheme
-    let without_scheme = url
-        .find("://")
-        .map(|i| &url[i + 3..])
-        .unwrap_or(url);
-    // Take up to first slash
+    let without_scheme = url.find("://").map(|i| &url[i + 3..]).unwrap_or(url);
     let host_and_port = without_scheme
         .find('/')
         .map(|i| &without_scheme[..i])
         .unwrap_or(without_scheme);
-    // Strip port
     host_and_port
         .rfind(':')
         .map(|i| &host_and_port[..i])
@@ -25,12 +19,35 @@ pub fn extract_host(url: &str) -> String {
         .to_string()
 }
 
-/// Generate EvolveLogging.ini content with the revival server host
+/// Parse the port from a URL. Falls back to 443 for https, 80 for http.
+pub fn extract_port(url: &str) -> u16 {
+    let without_scheme = url.find("://").map(|i| &url[i + 3..]).unwrap_or(url);
+    let host_and_port = without_scheme
+        .find('/')
+        .map(|i| &without_scheme[..i])
+        .unwrap_or(without_scheme);
+    if let Some(i) = host_and_port.rfind(':') {
+        if let Ok(p) = host_and_port[i + 1..].parse::<u16>() {
+            return p;
+        }
+    }
+    if url.starts_with("https://") { 443 } else { 80 }
+}
+
+/// Generate EvolveLogging.ini content pointing at the revival server.
 pub fn generate_logging_ini(server_url: &str) -> String {
     let host = extract_host(server_url);
+    let port = extract_port(server_url);
     format!(
-        "[Logging]\nserver_domain={}\nserver_port=2000\nuse_internal_server=false\ninternal_server_dll=EvolveLegacyRebornServer.dll\n",
-        host
+        "[server]\n\
+         server_domain = {host}\n\
+         server_port = {port}\n\
+         use_internal_server = false\n\
+         internal_server_dll = EvolveLegacyRebornServer.dll\n\
+         \n\
+         [steam]\n\
+         emu_steam = true\n\
+         dll_path = GoldbergNewEvolveEmu.dll\n"
     )
 }
 
@@ -55,11 +72,11 @@ pub async fn apply_patches(
         download_with_retry(client, &url, &dest, &patch.sha256, cancelled.clone()).await?;
     }
 
-    // Generate and write EvolveLogging.ini
-    std::fs::create_dir_all(install_dir).map_err(|e| e.to_string())?;
+    // Write EvolveLogging.ini into bin64_SteamRetail/ where the game expects it.
+    let bin_dir = install_dir.join("bin64_SteamRetail");
+    std::fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
     let ini_content = generate_logging_ini(server_url);
-    let ini_path = install_dir.join("EvolveLogging.ini");
-    std::fs::write(&ini_path, ini_content)
+    std::fs::write(bin_dir.join("EvolveLogging.ini"), ini_content)
         .map_err(|e| format!("Failed to write EvolveLogging.ini: {}", e))
 }
 
@@ -83,10 +100,31 @@ mod tests {
     }
 
     #[test]
+    fn extracts_port_explicit() {
+        assert_eq!(extract_port("https://revival.example.com:8443/path"), 8443);
+        assert_eq!(extract_port("http://192.168.1.1:2000"), 2000);
+    }
+
+    #[test]
+    fn extracts_port_implicit() {
+        assert_eq!(extract_port("https://cdn.evolve-revival.com"), 443);
+        assert_eq!(extract_port("http://cdn.evolve-revival.com"), 80);
+    }
+
+    #[test]
     fn generates_correct_ini_content() {
-        let ini = generate_logging_ini("https://revival.example.com:8080");
-        assert!(ini.contains("server_domain=revival.example.com"));
-        assert!(ini.contains("server_port=2000"));
-        assert!(ini.contains("use_internal_server=false"));
+        let ini = generate_logging_ini("https://revival.example.com:8443");
+        assert!(ini.contains("[server]"));
+        assert!(ini.contains("server_domain = revival.example.com"));
+        assert!(ini.contains("server_port = 8443"));
+        assert!(ini.contains("use_internal_server = false"));
+        assert!(ini.contains("[steam]"));
+        assert!(ini.contains("dll_path = GoldbergNewEvolveEmu.dll"));
+    }
+
+    #[test]
+    fn generates_ini_with_default_https_port() {
+        let ini = generate_logging_ini("https://play.evolve-community.net");
+        assert!(ini.contains("server_port = 443"));
     }
 }
