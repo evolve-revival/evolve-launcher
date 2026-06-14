@@ -5,7 +5,6 @@ import (
 
 	"github.com/evolve-revival/evolve-server/internal/config"
 	"github.com/evolve-revival/evolve-server/internal/db"
-	"github.com/evolve-revival/evolve-server/internal/relay"
 )
 
 func main() {
@@ -21,14 +20,7 @@ func main() {
 		log.Fatalf("migrate: %v", err)
 	}
 
-	rel := relay.New()
-	go func() {
-		if err := rel.Run(":" + cfg.RelayPort); err != nil {
-			log.Fatalf("relay: %v", err)
-		}
-	}()
-
-	r := buildRouterWithDeps(cfg, pool, rel)
+	r := buildRouterWithDeps(cfg, pool)
 
 	log.Printf("evolve-server listening on :%s", cfg.Port)
 	if err := r.Run(":" + cfg.Port); err != nil {

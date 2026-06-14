@@ -6,12 +6,11 @@ import (
 	"github.com/evolve-revival/evolve-server/internal/config"
 	"github.com/evolve-revival/evolve-server/internal/handler"
 	"github.com/evolve-revival/evolve-server/internal/middleware"
-	"github.com/evolve-revival/evolve-server/internal/relay"
 	"github.com/evolve-revival/evolve-server/internal/store"
 	"github.com/gin-gonic/gin"
 )
 
-func buildRouterWithDeps(cfg config.Config, pool *sql.DB, rel *relay.Relay) *gin.Engine {
+func buildRouterWithDeps(cfg config.Config, pool *sql.DB) *gin.Engine {
 	players := store.NewPlayerStore(pool)
 	storage := store.NewStorageStore(pool)
 
@@ -22,7 +21,6 @@ func buildRouterWithDeps(cfg config.Config, pool *sql.DB, rel *relay.Relay) *gin
 	playersH := handler.NewPlayersHandler(players)
 	stubs := handler.NewStubsHandler()
 	status := handler.NewStatusHandler("1.0.0")
-	punch := handler.NewPunchHandler(rel)
 
 	r := gin.Default()
 	r.Use(middleware.Auth())
@@ -50,9 +48,6 @@ func buildRouterWithDeps(cfg config.Config, pool *sql.DB, rel *relay.Relay) *gin
 	// Players
 	r.GET("/players/1/:playerId", playersH.Get)
 	r.Any("/players/1/:playerId/*subpath", stubs.Stub200)
-
-	// Peer punch signaling — no auth (external IP registration before SSO logon)
-	r.POST("/peers/register", punch.Register)
 
 	// Stubs
 	r.POST("/telemetry/1/event", stubs.Stub200)

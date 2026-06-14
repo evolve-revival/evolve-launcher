@@ -8,7 +8,6 @@ import (
 
 	"github.com/evolve-revival/evolve-server/internal/config"
 	"github.com/evolve-revival/evolve-server/internal/db"
-	"github.com/evolve-revival/evolve-server/internal/relay"
 )
 
 func TestIntegration_StatusEndpoint(t *testing.T) {
@@ -28,7 +27,7 @@ func TestIntegration_StatusEndpoint(t *testing.T) {
 	}
 
 	cfg := config.Config{Port: "8080", ServerHost: "localhost:8080"}
-	r := buildRouterWithDeps(cfg, pool, relay.New())
+	r := buildRouterWithDeps(cfg, pool)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/status", nil)
@@ -56,7 +55,7 @@ func TestIntegration_DoormanConfigsGenerate(t *testing.T) {
 	}
 
 	cfg := config.Config{Port: "8080", ServerHost: "localhost:8080"}
-	r := buildRouterWithDeps(cfg, pool, relay.New())
+	r := buildRouterWithDeps(cfg, pool)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/doorman/1/configs/generate", nil)
