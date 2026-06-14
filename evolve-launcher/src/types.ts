@@ -51,8 +51,9 @@ export interface SteamAccount {
   account_name: string;
 }
 
-export interface NatInfo {
-  external_ip: string;
-  external_port: number;
-  nat_type: 'direct' | 'relay-only' | string;
+export interface DonorStatus {
+  installed: boolean;
+  dll_ready: boolean;
+  donor_name: string;
+  donor_app_id: number;
 }
