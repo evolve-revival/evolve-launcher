@@ -51,7 +51,9 @@ pub fn generate_logging_ini(server_url: &str) -> String {
     )
 }
 
-/// Download and apply all patch files, then write EvolveLogging.ini
+/// Download and apply all patch files, then write EvolveLogging.ini and
+/// steam_settings/custom_broadcasts.txt so Goldberg sends peer discovery
+/// packets to the revival server's UDP relay.
 pub async fn apply_patches(
     client: &Client,
     manifest: &Manifest,
@@ -72,12 +74,21 @@ pub async fn apply_patches(
         download_with_retry(client, &url, &dest, &patch.sha256, cancelled.clone()).await?;
     }
 
-    // Write EvolveLogging.ini into bin64_SteamRetail/ where the game expects it.
     let bin_dir = install_dir.join("bin64_SteamRetail");
     std::fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
+
+    // Write EvolveLogging.ini where the game expects it.
     let ini_content = generate_logging_ini(server_url);
     std::fs::write(bin_dir.join("EvolveLogging.ini"), ini_content)
-        .map_err(|e| format!("Failed to write EvolveLogging.ini: {}", e))
+        .map_err(|e| format!("Failed to write EvolveLogging.ini: {}", e))?;
+
+    // Write custom_broadcasts.txt so Goldberg sends UDP peer-discovery packets
+    // to the revival server's relay instead of relying on LAN broadcast.
+    let settings_dir = bin_dir.join("steam_settings");
+    std::fs::create_dir_all(&settings_dir).map_err(|e| e.to_string())?;
+    let host = extract_host(server_url);
+    std::fs::write(settings_dir.join("custom_broadcasts.txt"), format!("{host}\n"))
+        .map_err(|e| format!("Failed to write custom_broadcasts.txt: {}", e))
 }
 
 #[cfg(test)]
@@ -126,5 +137,13 @@ mod tests {
     fn generates_ini_with_default_https_port() {
         let ini = generate_logging_ini("https://play.evolve-community.net");
         assert!(ini.contains("server_port = 443"));
+    }
+
+    #[test]
+    fn extracts_host_for_broadcasts_file() {
+        // custom_broadcasts.txt needs only the hostname (no port, no scheme).
+        assert_eq!(extract_host("https://revival.example.com:8443/"), "revival.example.com");
+        assert_eq!(extract_host("http://192.168.1.50:8080"), "192.168.1.50");
+        assert_eq!(extract_host("https://play.evolve-revival.com"), "play.evolve-revival.com");
     }
 }
