@@ -92,13 +92,14 @@ pub fn probe_stun(relay_host: &str, relay_port: u16) -> Result<NatInfo, String> 
 // ── Proxy ─────────────────────────────────────────────────────────────────
 
 pub struct ProxyHandle {
-    pub shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    tasks: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl ProxyHandle {
-    pub fn stop(&self) {
-        self.shutdown
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+    pub fn stop(self) {
+        for handle in self.tasks {
+            handle.abort();
+        }
     }
 }
 
@@ -118,7 +119,6 @@ pub async fn start_proxy(
     relay_host: String,
     relay_port: u16,
 ) -> Result<(ProxyHandle, Option<std::net::SocketAddr>), String> {
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
     // Bind local socket for Goldberg.
@@ -164,55 +164,50 @@ pub async fn start_proxy(
         }
     };
 
-    let shutdown = Arc::new(AtomicBool::new(false));
-
     // Shared state between the two tasks.
     let goldberg_addr: Arc<Mutex<Option<std::net::SocketAddr>>> = Arc::new(Mutex::new(None));
     let direct_peers: Arc<Mutex<Vec<std::net::SocketAddr>>> = Arc::new(Mutex::new(Vec::new()));
 
     // ── Task A: local → relay/direct ──────────────────────────────────────
-    {
+    let handle_a = {
         let local_r = Arc::clone(&local);
         let relay_w = Arc::clone(&relay_sock);
         let ga_w = Arc::clone(&goldberg_addr);
         let dp_r = Arc::clone(&direct_peers);
-        let sd = Arc::clone(&shutdown);
 
         tokio::spawn(async move {
             let mut buf = vec![0u8; 65507];
-            while !sd.load(Ordering::Relaxed) {
+            loop {
                 let Ok((n, from)) = local_r.recv_from(&mut buf).await else {
                     break;
                 };
                 *ga_w.lock().unwrap() = Some(from);
 
                 let packet = buf[..n].to_vec();
-                let peers = dp_r.lock().unwrap().clone();
 
-                if peers.is_empty() {
-                    // No direct peers yet — send to relay.
-                    let _ = relay_w.send_to(&packet, relay_addr).await;
-                } else {
-                    // Direct path: send to every known peer.
-                    for peer in &peers {
-                        let _ = relay_w.send_to(&packet, peer).await;
-                    }
+                // Always send to relay for guaranteed delivery (relay distributes
+                // to all registered peers). Also send direct for lower latency
+                // once holes are punched — relay and direct delivery are both safe
+                // since the game protocol tolerates duplicates.
+                let _ = relay_w.send_to(&packet, relay_addr).await;
+                let peers = dp_r.lock().unwrap().clone();
+                for peer in &peers {
+                    let _ = relay_w.send_to(&packet, peer).await;
                 }
             }
-        });
-    }
+        })
+    };
 
     // ── Task B: relay/direct → local ──────────────────────────────────────
-    {
+    let handle_b = {
         let relay_r = Arc::clone(&relay_sock);
         let local_w = Arc::clone(&local);
         let ga_r = Arc::clone(&goldberg_addr);
         let dp_w = Arc::clone(&direct_peers);
-        let sd = Arc::clone(&shutdown);
 
         tokio::spawn(async move {
             let mut buf = vec![0u8; 65507];
-            while !sd.load(Ordering::Relaxed) {
+            loop {
                 let Ok((n, from)) = relay_r.recv_from(&mut buf).await else {
                     break;
                 };
@@ -246,10 +241,10 @@ pub async fn start_proxy(
                     let _ = local_w.send_to(&buf[..n], ga).await;
                 }
             }
-        });
-    }
+        })
+    };
 
-    Ok((ProxyHandle { shutdown }, relay_external))
+    Ok((ProxyHandle { tasks: vec![handle_a, handle_b] }, relay_external))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
