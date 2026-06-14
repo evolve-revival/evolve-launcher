@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod donor;
 mod downloader;
 mod install;
 mod nat;
