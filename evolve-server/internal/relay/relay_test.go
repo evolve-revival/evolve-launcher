@@ -102,3 +102,47 @@ func TestRelay_NoForwardWithSinglePeer(t *testing.T) {
 		t.Error("single peer received unexpected data")
 	}
 }
+
+func TestRelay_RespondsToSTUNProbe(t *testing.T) {
+	relayAddr := startRelay(t)
+
+	c := dial(t)
+	dst, _ := net.ResolveUDPAddr("udp", relayAddr)
+
+	req := relay.FakeBindingRequest()
+	if _, err := c.WriteTo(req, dst); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, ok := recv(t, c, 200*time.Millisecond)
+	if !ok {
+		t.Fatal("no STUN response")
+	}
+	got := relay.ParseSTUNMappedAddress(resp)
+	if got == nil {
+		t.Fatal("response did not contain XOR-MAPPED-ADDRESS")
+	}
+	if got.Port == 0 {
+		t.Error("mapped port should be non-zero")
+	}
+}
+
+func TestRelay_STUNProbeNotForwarded(t *testing.T) {
+	relayAddr := startRelay(t)
+
+	a := dial(t)
+	b := dial(t)
+	// Register b so it would receive forwarded packets.
+	send(t, b, relayAddr, []byte("register-b"))
+	recv(t, a, 50*time.Millisecond) // drain
+
+	// a sends a STUN probe — b must NOT receive it.
+	dst, _ := net.ResolveUDPAddr("udp", relayAddr)
+	req := relay.FakeBindingRequest()
+	a.WriteTo(req, dst)
+
+	_, forwarded := recv(t, b, 50*time.Millisecond)
+	if forwarded {
+		t.Error("STUN probe was forwarded to peer (should not be)")
+	}
+}
