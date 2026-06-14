@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
-pub const MANIFEST_URL: &str = "https://cdn.evolve-revival.com/manifest.json";
+pub const MANIFEST_URL: &str = "https://evolve.navitank.org/manifest.json";
 const MAX_CONCURRENT: usize = 4;
 const MAX_RETRIES: u32 = 3;
 
