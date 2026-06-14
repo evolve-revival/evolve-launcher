@@ -5,7 +5,10 @@ import (
 	"net"
 )
 
-const stunMagicCookie = uint32(0x2112A442)
+const (
+	stunMagicCookie   = uint32(0x2112A442)
+	stunMagicPortXOR  = uint16(0x2112)
+)
 
 var stunMagicBytes = [4]byte{0x21, 0x12, 0xA4, 0x42}
 
@@ -38,9 +41,12 @@ func BuildSTUNResponse(req []byte, from *net.UDPAddr) []byte {
 	msg[23] = 0x08
 	msg[24] = 0x00 // reserved
 	msg[25] = 0x01 // family: IPv4
-	port := uint16(from.Port) ^ 0x2112
+	port := uint16(from.Port) ^ stunMagicPortXOR
 	binary.BigEndian.PutUint16(msg[26:28], port)
 	ip4 := from.IP.To4()
+	if ip4 == nil {
+		return nil
+	}
 	ipInt := binary.BigEndian.Uint32(ip4) ^ stunMagicCookie
 	binary.BigEndian.PutUint32(msg[28:32], ipInt)
 
@@ -76,7 +82,7 @@ func ParseSTUNMappedAddress(buf []byte) *net.UDPAddr {
 			if val[1] != 0x01 { // only IPv4
 				break
 			}
-			port := binary.BigEndian.Uint16(val[2:4]) ^ 0x2112
+			port := binary.BigEndian.Uint16(val[2:4]) ^ stunMagicPortXOR
 			ipInt := binary.BigEndian.Uint32(val[4:8]) ^ stunMagicCookie
 			ip := make(net.IP, 4)
 			binary.BigEndian.PutUint32(ip, ipInt)
@@ -86,14 +92,4 @@ func ParseSTUNMappedAddress(buf []byte) *net.UDPAddr {
 		offset += 4 + ((attrLen + 3) &^ 3)
 	}
 	return nil
-}
-
-// FakeBindingRequest returns a minimal valid STUN Binding Request for tests.
-func FakeBindingRequest() []byte {
-	msg := make([]byte, 20)
-	msg[0] = 0x00
-	msg[1] = 0x01
-	copy(msg[4:8], stunMagicBytes[:])
-	copy(msg[8:20], []byte("txid12345678"))
-	return msg
 }
