@@ -2,7 +2,9 @@ mod commands;
 mod config;
 mod downloader;
 mod install;
+mod nat;
 mod patcher;
+mod steam;
 
 use commands::AppDownloadState;
 use downloader::DownloadState;
@@ -28,6 +30,8 @@ pub fn run() {
             commands::start_repair,
             commands::start_update,
             commands::launch_game,
+            commands::list_steam_accounts,
+            commands::add_to_steam,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
