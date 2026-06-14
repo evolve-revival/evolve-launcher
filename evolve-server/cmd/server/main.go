@@ -21,14 +21,14 @@ func main() {
 		log.Fatalf("migrate: %v", err)
 	}
 
-	// Start UDP relay for Goldberg peer discovery alongside the HTTP server.
+	rel := relay.New()
 	go func() {
-		if err := relay.New().Run(":" + cfg.RelayPort); err != nil {
+		if err := rel.Run(":" + cfg.RelayPort); err != nil {
 			log.Fatalf("relay: %v", err)
 		}
 	}()
 
-	r := buildRouterWithDeps(cfg, pool)
+	r := buildRouterWithDeps(cfg, pool, rel)
 
 	log.Printf("evolve-server listening on :%s", cfg.Port)
 	if err := r.Run(":" + cfg.Port); err != nil {

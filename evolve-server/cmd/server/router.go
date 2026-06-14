@@ -6,22 +6,23 @@ import (
 	"github.com/evolve-revival/evolve-server/internal/config"
 	"github.com/evolve-revival/evolve-server/internal/handler"
 	"github.com/evolve-revival/evolve-server/internal/middleware"
+	"github.com/evolve-revival/evolve-server/internal/relay"
 	"github.com/evolve-revival/evolve-server/internal/store"
 	"github.com/gin-gonic/gin"
 )
 
-func buildRouterWithDeps(cfg config.Config, pool *sql.DB) *gin.Engine {
+func buildRouterWithDeps(cfg config.Config, pool *sql.DB, rel *relay.Relay) *gin.Engine {
 	players := store.NewPlayerStore(pool)
 	storage := store.NewStorageStore(pool)
-	peers := store.NewPeerStore(pool)
 
 	sso := handler.NewSSOHandler(players)
 	doorman := handler.NewDoormanHandler(cfg.ServerHost)
 	entitlements := handler.NewEntitlementsHandler()
 	stor := handler.NewStorageHandler(storage)
-	peersH := handler.NewPeersHandler(peers)
+	playersH := handler.NewPlayersHandler(players)
 	stubs := handler.NewStubsHandler()
 	status := handler.NewStatusHandler("1.0.0")
+	punch := handler.NewPunchHandler(rel)
 
 	r := gin.Default()
 	r.Use(middleware.Auth())
@@ -46,16 +47,26 @@ func buildRouterWithDeps(cfg config.Config, pool *sql.DB) *gin.Engine {
 	r.PUT("/storage/1/data/:datasetId/:key", stor.Put)
 	r.DELETE("/storage/1/data/:datasetId/:key", stor.Delete)
 
-	// Peers
-	r.POST("/peers/register", peersH.Register)
-	r.GET("/peers/:lobbyId", peersH.GetPeers)
+	// Players
+	r.GET("/players/1/:playerId", playersH.Get)
+	r.Any("/players/1/:playerId/*subpath", stubs.Stub200)
 
-	// Stubs — endpoints the client contacts but need no real logic
+	// Peer punch signaling — no auth (external IP registration before SSO logon)
+	r.POST("/peers/register", punch.Register)
+
+	// Stubs
 	r.POST("/telemetry/1/event", stubs.Stub200)
 	r.GET("/stats/1/configs", stubs.StatsConfigs)
 	r.POST("/grants/1/find", stubs.GrantsFind)
-	r.GET("/queue/1/waittime", stubs.QueueWaittime)
+	r.GET("/queue/waittime", stubs.QueueWaittime)
 	r.POST("/heartbeat", stubs.Heartbeat)
+
+	// Wildcard stubs
+	r.Any("/apps/1/*path", stubs.Stub200)
+	r.Any("/content/1/*path", stubs.Stub200)
+	r.Any("/storefront/1/*path", stubs.Stub200)
+	r.Any("/sessions/1/*path", stubs.Stub200)
+	r.Any("/news/1/*path", stubs.Stub200)
 
 	return r
 }
