@@ -3,10 +3,11 @@
   import { onMount } from 'svelte';
   import type { AppState } from '../types';
 
-  let { appState, onSettings, onRepair }: {
+  let { appState, onSettings, onRepair, onVersions }: {
     appState: AppState;
     onSettings: () => void;
     onRepair: () => void;
+    onVersions: () => void;
   } = $props();
 
   type Status = 'checking' | 'online' | 'degraded' | 'offline';
@@ -91,10 +92,22 @@
     </span>
     <div style="display:flex; gap:14px; align-items:center;">
       <button class="repair-btn" onclick={async () => { await invoke('start_repair'); onRepair(); }}>Repair</button>
+      <button class="versions-btn" onclick={onVersions}>Versions</button>
       <button class="settings-btn" onclick={onSettings}>Settings</button>
     </div>
   </div>
 </div>
 
 <style>
+  .versions-btn {
+    background: transparent;
+    border: 1px solid #2e2e38;
+    color: #888;
+    padding: 5px 12px;
+    border-radius: 5px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .versions-btn:hover { border-color: #888; color: #ccc; }
 </style>

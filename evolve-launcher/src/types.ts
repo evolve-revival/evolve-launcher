@@ -57,3 +57,12 @@ export interface DonorStatus {
   donor_name: string;
   donor_app_id: number;
 }
+
+export interface VersionInfo {
+  id: string;
+  name: string;
+  install_dir: string;
+  state: string;
+  installed_build: number | null;
+  is_active: boolean;
+}
