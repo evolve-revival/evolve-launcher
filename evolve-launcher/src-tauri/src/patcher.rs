@@ -1,13 +1,10 @@
+use crate::donor;
 use crate::downloader::download_with_retry;
 use crate::install::Manifest;
 use reqwest::Client;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-
-/// The address Goldberg should send peer-discovery packets to.
-/// Pointing at localhost lets the launcher's local proxy intercept them.
-pub const PROXY_LOCAL_HOST: &str = "127.0.0.1";
 
 /// Parse the hostname from a URL like "https://host:port/path" → "host"
 pub fn extract_host(url: &str) -> String {
@@ -38,7 +35,8 @@ pub fn extract_port(url: &str) -> u16 {
     if url.starts_with("https://") { 443 } else { 80 }
 }
 
-/// Generate EvolveLogging.ini content pointing at the revival server.
+/// Generate EvolveLogging.ini content pointing at the revival server,
+/// using the real Steamworks shim instead of Goldberg.
 pub fn generate_logging_ini(server_url: &str) -> String {
     let host = extract_host(server_url);
     let port = extract_port(server_url);
@@ -47,17 +45,21 @@ pub fn generate_logging_ini(server_url: &str) -> String {
          server_domain = {host}\n\
          server_port = {port}\n\
          use_internal_server = false\n\
-         internal_server_dll = EvolveLegacyRebornServer.dll\n\
          \n\
          [steam]\n\
-         emu_steam = true\n\
-         dll_path = GoldbergNewEvolveEmu.dll\n"
+         emu_steam = false\n\
+         dll_path = {}\n",
+        donor::SHIM_DLL
     )
 }
 
+/// Content for steam_appid.txt — real Steamworks reads this to determine App ID at startup.
+pub fn steam_appid_content() -> String {
+    format!("{}\n", donor::DONOR_APP_ID)
+}
+
 /// Download and apply all patch files, then write EvolveLogging.ini and
-/// steam_settings/custom_broadcasts.txt so Goldberg sends peer discovery
-/// packets to the revival server's UDP relay.
+/// steam_appid.txt so the game uses the donor App ID for Steam session auth.
 pub async fn apply_patches(
     client: &Client,
     manifest: &Manifest,
@@ -81,20 +83,11 @@ pub async fn apply_patches(
     let bin_dir = install_dir.join("bin64_SteamRetail");
     std::fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
 
-    // Write EvolveLogging.ini where the game expects it.
-    let ini_content = generate_logging_ini(server_url);
-    std::fs::write(bin_dir.join("EvolveLogging.ini"), ini_content)
-        .map_err(|e| format!("Failed to write EvolveLogging.ini: {}", e))?;
+    std::fs::write(bin_dir.join("EvolveLogging.ini"), generate_logging_ini(server_url))
+        .map_err(|e| format!("Failed to write EvolveLogging.ini: {e}"))?;
 
-    // Write custom_broadcasts.txt so Goldberg sends UDP peer-discovery packets
-    // to localhost, where the launcher's local proxy intercepts them.
-    let settings_dir = bin_dir.join("steam_settings");
-    std::fs::create_dir_all(&settings_dir).map_err(|e| e.to_string())?;
-    std::fs::write(
-        settings_dir.join("custom_broadcasts.txt"),
-        format!("{PROXY_LOCAL_HOST}\n"),
-    )
-    .map_err(|e| format!("Failed to write custom_broadcasts.txt: {}", e))
+    std::fs::write(bin_dir.join("steam_appid.txt"), steam_appid_content())
+        .map_err(|e| format!("Failed to write steam_appid.txt: {e}"))
 }
 
 #[cfg(test)]
@@ -136,25 +129,27 @@ mod tests {
         assert!(ini.contains("server_port = 8443"));
         assert!(ini.contains("use_internal_server = false"));
         assert!(ini.contains("[steam]"));
-        assert!(ini.contains("dll_path = GoldbergNewEvolveEmu.dll"));
+        assert!(ini.contains("emu_steam = false"));
+        assert!(ini.contains("dll_path = evolve_shim.dll"));
+        assert!(!ini.contains("GoldbergNewEvolveEmu.dll"));
     }
 
     #[test]
     fn generates_ini_with_default_https_port() {
         let ini = generate_logging_ini("https://play.evolve-community.net");
         assert!(ini.contains("server_port = 443"));
+        assert!(ini.contains("emu_steam = false"));
     }
 
     #[test]
     fn extracts_host_for_broadcasts_file() {
-        // custom_broadcasts.txt needs only the hostname (no port, no scheme).
         assert_eq!(extract_host("https://revival.example.com:8443/"), "revival.example.com");
         assert_eq!(extract_host("http://192.168.1.50:8080"), "192.168.1.50");
         assert_eq!(extract_host("https://play.evolve-revival.com"), "play.evolve-revival.com");
     }
 
     #[test]
-    fn custom_broadcasts_uses_localhost() {
-        assert_eq!(PROXY_LOCAL_HOST, "127.0.0.1");
+    fn steam_appid_content_is_donor_id() {
+        assert_eq!(steam_appid_content(), "480\n");
     }
 }
