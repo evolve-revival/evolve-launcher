@@ -42,4 +42,17 @@ export type AppState =
   | 'paused'
   | 'ready'
   | 'update-available'
-  | 'repairing';
+  | 'repairing'
+  | 'steam-setup';
+
+export interface SteamAccount {
+  steam_id: string;
+  persona_name: string;
+  account_name: string;
+}
+
+export interface NatInfo {
+  external_ip: string;
+  external_port: number;
+  nat_type: 'direct' | 'relay-only' | string;
+}
