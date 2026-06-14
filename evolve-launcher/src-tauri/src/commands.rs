@@ -36,20 +36,21 @@ pub struct InstallStatus {
 pub fn check_install_state(app: AppHandle) -> InstallStatus {
     let cfg = Config::load(&app);
 
-    if cfg.install_dir.is_empty() {
+    let active = cfg.active_version();
+    if active.install_dir.is_empty() {
         return InstallStatus {
             state: "not-installed".to_string(),
-            install_dir: cfg.install_dir,
+            install_dir: active.install_dir.clone(),
             installed_build: None,
         };
     }
 
-    let install_dir = PathBuf::from(&cfg.install_dir);
+    let install_dir = PathBuf::from(&active.install_dir);
 
     if install_dir.join("progress.json").exists() {
         return InstallStatus {
             state: "paused".to_string(),
-            install_dir: cfg.install_dir,
+            install_dir: active.install_dir.clone(),
             installed_build: None,
         };
     }
@@ -57,12 +58,12 @@ pub fn check_install_state(app: AppHandle) -> InstallStatus {
     match InstallRecord::load(&install_dir) {
         None => InstallStatus {
             state: "not-installed".to_string(),
-            install_dir: cfg.install_dir,
+            install_dir: active.install_dir.clone(),
             installed_build: None,
         },
         Some(record) => InstallStatus {
             state: "ready".to_string(),
-            install_dir: cfg.install_dir,
+            install_dir: active.install_dir.clone(),
             installed_build: Some(record.build),
         },
     }
@@ -71,10 +72,10 @@ pub fn check_install_state(app: AppHandle) -> InstallStatus {
 #[tauri::command]
 pub async fn check_for_updates(app: AppHandle) -> Result<bool, String> {
     let cfg = Config::load(&app);
-    if cfg.install_dir.is_empty() {
+    if cfg.active_version().install_dir.is_empty() {
         return Ok(false);
     }
-    let install_dir = PathBuf::from(&cfg.install_dir);
+    let install_dir = PathBuf::from(&cfg.active_version().install_dir);
     let record = match InstallRecord::load(&install_dir) {
         None => return Ok(false),
         Some(r) => r,
@@ -119,7 +120,7 @@ pub async fn get_components(app: AppHandle) -> Result<Vec<ComponentState>, Strin
         return Ok(vec![]);
     }
 
-    let selected = &cfg.selected_components;
+    let selected = &cfg.active_version().selected_components.clone();
     let result = manifest
         .components
         .iter()
@@ -137,7 +138,9 @@ pub async fn get_components(app: AppHandle) -> Result<Vec<ComponentState>, Strin
 #[tauri::command]
 pub fn save_components(app: AppHandle, selected: Vec<String>) -> Result<(), String> {
     let mut cfg = Config::load(&app);
-    cfg.selected_components = Some(selected);
+    if let Some(v) = cfg.active_version_mut() {
+        v.selected_components = Some(selected);
+    }
     cfg.save(&app)
 }
 
@@ -170,7 +173,7 @@ pub async fn get_tiers(app: AppHandle) -> Result<Vec<TierState>, String> {
             components: t.components.clone(),
             size_bytes: manifest.tier_size(t),
             recommended: t.recommended,
-            selected: cfg.selected_tier.as_deref() == Some(t.id.as_str()),
+            selected: cfg.active_version().selected_tier.as_deref() == Some(t.id.as_str()),
         })
         .collect())
 }
@@ -178,8 +181,10 @@ pub async fn get_tiers(app: AppHandle) -> Result<Vec<TierState>, String> {
 #[tauri::command]
 pub fn save_tier(app: AppHandle, tier_id: String, components: Vec<String>) -> Result<(), String> {
     let mut cfg = Config::load(&app);
-    cfg.selected_tier = Some(tier_id);
-    cfg.selected_components = Some(components);
+    if let Some(v) = cfg.active_version_mut() {
+        v.selected_tier = Some(tier_id);
+        v.selected_components = Some(components);
+    }
     cfg.save(&app)
 }
 
@@ -192,7 +197,9 @@ pub async fn start_install(
     state: State<'_, AppDownloadState>,
 ) -> Result<(), String> {
     let mut cfg = Config::load(&app);
-    cfg.install_dir = install_dir.clone();
+    if let Some(v) = cfg.active_version_mut() {
+        v.install_dir = install_dir.clone();
+    }
     cfg.save(&app)?;
 
     let cancelled = {
@@ -216,8 +223,8 @@ pub async fn start_install(
         };
 
         let cfg_now = Config::load(&app_clone);
-        let server_url = cfg_now.server_url;
-        let selected_files = manifest.filter_by_selection(&cfg_now.selected_components);
+        let server_url = cfg_now.server_url.clone();
+        let selected_files = manifest.filter_by_selection(&cfg_now.active_version().selected_components);
 
         match run_downloads(
             app_clone.clone(),
@@ -245,7 +252,7 @@ pub async fn start_install(
             return;
         }
 
-        if let Some(ref tier_id) = cfg_now.selected_tier {
+        if let Some(ref tier_id) = cfg_now.active_version().selected_tier.clone() {
             if let Some(tier) = manifest.tiers.iter().find(|t| t.id == *tier_id) {
                 if let Err(e) = apply_perf_config(&dir, &tier.perf_config) {
                     eprintln!("Warning: could not apply tier perf config: {}", e);
@@ -280,10 +287,11 @@ pub async fn resume_install(
     state: State<'_, AppDownloadState>,
 ) -> Result<(), String> {
     let cfg = Config::load(&app);
-    if cfg.install_dir.is_empty() {
+    let install_dir = cfg.active_version().install_dir.clone();
+    if install_dir.is_empty() {
         return Err("No install directory configured".to_string());
     }
-    start_install(app, cfg.install_dir, state).await
+    start_install(app, install_dir, state).await
 }
 
 // ── Repair ────────────────────────────────────────────────────────────────
@@ -294,7 +302,8 @@ pub async fn start_repair(
     state: State<'_, AppDownloadState>,
 ) -> Result<(), String> {
     let cfg = Config::load(&app);
-    if cfg.install_dir.is_empty() {
+    let repair_dir = cfg.active_version().install_dir.clone();
+    if repair_dir.is_empty() {
         return Err("No install directory configured".to_string());
     }
 
@@ -304,7 +313,7 @@ pub async fn start_repair(
         Arc::clone(&ds.cancelled)
     };
 
-    let dir = PathBuf::from(&cfg.install_dir);
+    let dir = PathBuf::from(&repair_dir);
     let server_url = cfg.server_url.clone();
     let app_clone = app.clone();
 
@@ -321,7 +330,7 @@ pub async fn start_repair(
         ProgressRecord::delete(&dir);
 
         let cfg_now = Config::load(&app_clone);
-        let selected_files = manifest.filter_by_selection(&cfg_now.selected_components);
+        let selected_files = manifest.filter_by_selection(&cfg_now.active_version().selected_components);
 
         match run_downloads(
             app_clone.clone(),
@@ -349,7 +358,7 @@ pub async fn start_repair(
             return;
         }
 
-        if let Some(ref tier_id) = cfg_now.selected_tier {
+        if let Some(ref tier_id) = cfg_now.active_version().selected_tier.clone() {
             if let Some(tier) = manifest.tiers.iter().find(|t| t.id == *tier_id) {
                 if let Err(e) = apply_perf_config(&dir, &tier.perf_config) {
                     eprintln!("Warning: could not apply tier perf config: {}", e);
@@ -381,10 +390,11 @@ pub async fn start_update(
     state: State<'_, AppDownloadState>,
 ) -> Result<(), String> {
     let cfg = Config::load(&app);
-    if cfg.install_dir.is_empty() {
+    let install_dir = cfg.active_version().install_dir.clone();
+    if install_dir.is_empty() {
         return Err("No install directory configured".to_string());
     }
-    start_install(app, cfg.install_dir, state).await
+    start_install(app, install_dir, state).await
 }
 
 // ── Steam integration ─────────────────────────────────────────────────────
@@ -399,7 +409,7 @@ pub fn list_steam_accounts() -> Result<Vec<crate::steam::SteamAccount>, String> 
 #[tauri::command]
 pub fn add_to_steam(app: AppHandle, steam_id: String) -> Result<(), String> {
     let cfg = Config::load(&app);
-    if cfg.install_dir.is_empty() {
+    if cfg.active_version().install_dir.is_empty() {
         return Err("No install directory configured".to_string());
     }
     let root = crate::steam::find_steam_root()
@@ -437,10 +447,11 @@ pub fn check_donor_game(app: AppHandle) -> DonorStatus {
     let donor_dir = crate::steam::find_donor_game_dir(&steam_root, crate::donor::DONOR_APP_ID);
     let installed = donor_dir.is_some();
 
-    let dll_ready = if cfg.install_dir.is_empty() {
+    let install_dir = &cfg.active_version().install_dir;
+    let dll_ready = if install_dir.is_empty() {
         false
     } else {
-        PathBuf::from(&cfg.install_dir)
+        PathBuf::from(install_dir)
             .join("bin64_SteamRetail")
             .join(crate::donor::REAL_STEAM_API_DLL)
             .exists()
@@ -452,6 +463,57 @@ pub fn check_donor_game(app: AppHandle) -> DonorStatus {
         donor_name,
         donor_app_id: crate::donor::DONOR_APP_ID,
     }
+}
+
+// ── Version management ────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+pub struct VersionInfo {
+    pub id: String,
+    pub name: String,
+    pub install_dir: String,
+    pub state: String,
+    pub installed_build: Option<u64>,
+    pub is_active: bool,
+}
+
+#[tauri::command]
+pub fn get_versions(app: AppHandle) -> Vec<VersionInfo> {
+    let cfg = Config::load(&app);
+    cfg.versions.iter().map(|v| {
+        let (state, installed_build) = if v.install_dir.is_empty() {
+            ("not-installed".to_string(), None)
+        } else {
+            let dir = PathBuf::from(&v.install_dir);
+            if dir.join("progress.json").exists() {
+                ("paused".to_string(), None)
+            } else {
+                match crate::install::InstallRecord::load(&dir) {
+                    Some(r) => ("ready".to_string(), Some(r.build)),
+                    None => ("not-installed".to_string(), None),
+                }
+            }
+        };
+        VersionInfo {
+            is_active: v.id == cfg.active_version_id,
+            id: v.id.clone(),
+            name: v.name.clone(),
+            install_dir: v.install_dir.clone(),
+            state,
+            installed_build,
+        }
+    }).collect()
+}
+
+#[tauri::command]
+pub fn switch_version(app: AppHandle, id: String) -> Result<InstallStatus, String> {
+    let mut cfg = Config::load(&app);
+    if !cfg.versions.iter().any(|v| v.id == id) {
+        return Err(format!("Unknown version: {id}"));
+    }
+    cfg.active_version_id = id;
+    cfg.save(&app)?;
+    Ok(check_install_state(app))
 }
 
 #[tauri::command]
@@ -468,11 +530,12 @@ pub fn open_steam_store(app_id: u32) {
 #[tauri::command]
 pub async fn launch_game(app: AppHandle) -> Result<(), String> {
     let cfg = Config::load(&app);
-    if cfg.install_dir.is_empty() {
+    let game_install_dir = cfg.active_version().install_dir.clone();
+    if game_install_dir.is_empty() {
         return Err("Game is not installed".to_string());
     }
 
-    let bin_dir = PathBuf::from(&cfg.install_dir).join("bin64_SteamRetail");
+    let bin_dir = PathBuf::from(&game_install_dir).join("bin64_SteamRetail");
     let exe = bin_dir.join("Evolve.exe");
 
     // Pre-flight 1: ensure steam_api64_real.dll is present (copy if missing)
@@ -535,7 +598,7 @@ pub async fn launch_game(app: AppHandle) -> Result<(), String> {
         let proton = crate::steam::find_proton(&steam_root).ok_or_else(|| {
             "Proton not found. Open Steam → Tools and install Proton Experimental.".to_string()
         })?;
-        let compat_prefix = PathBuf::from(&cfg.install_dir).join("proton_prefix");
+        let compat_prefix = PathBuf::from(&game_install_dir).join("proton_prefix");
         std::fs::create_dir_all(&compat_prefix).map_err(|e| e.to_string())?;
         let cwd = exe.parent().unwrap_or_else(|| std::path::Path::new("."));
         std::process::Command::new(&proton)
