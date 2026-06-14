@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-const APP_NAME: &str = "Evolve Stage 2";
+const APP_NAME: &str = "Evolve";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
