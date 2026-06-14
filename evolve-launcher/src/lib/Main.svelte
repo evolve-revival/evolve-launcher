@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import type { AppState } from '../types';
+  import { onMount } from 'svelte';
+  import type { AppState, NatInfo } from '../types';
 
   let { appState, onSettings, onRepair }: {
     appState: AppState;
@@ -15,6 +16,11 @@
   let filesVerified = $state(true);
   let launching = $state(false);
   let launchError = $state('');
+  let natInfo = $state<NatInfo | null>(null);
+
+  onMount(() => {
+    invoke<NatInfo>('get_nat_type').then(info => { natInfo = info; }).catch(() => {});
+  });
 
   const canPlay = $derived(
     (status === 'online' || status === 'degraded') && filesVerified
@@ -69,6 +75,13 @@
     {:else}
       OFFLINE
     {/if}
+    {#if natInfo !== null}
+      <span class="status-sep">&nbsp;·&nbsp;</span>
+      <div class="nat-indicator">
+        <span class="nat-dot" class:nat-direct={natInfo.nat_type === 'direct'} class:nat-relay={natInfo.nat_type !== 'direct'}></span>
+        <span class="nat-label">{natInfo.nat_type === 'direct' ? 'Direct' : 'Relay'}</span>
+      </div>
+    {/if}
   </div>
 
   {#if launchError}
@@ -93,3 +106,36 @@
     </div>
   </div>
 </div>
+
+<style>
+  .status-sep {
+    color: #555;
+  }
+
+  .nat-indicator {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: #888;
+  }
+
+  .nat-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #888;
+  }
+
+  .nat-dot.nat-direct {
+    background: #4ade80;
+  }
+
+  .nat-dot.nat-relay {
+    background: #f59e0b;
+  }
+
+  .nat-label {
+    color: #aaa;
+  }
+</style>
