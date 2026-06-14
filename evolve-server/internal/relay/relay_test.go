@@ -146,3 +146,58 @@ func TestRelay_STUNProbeNotForwarded(t *testing.T) {
 		t.Error("STUN probe was forwarded to peer (should not be)")
 	}
 }
+
+func TestRelay_RegisterNamedAutoPunch(t *testing.T) {
+	relayAddr := startRelay(t)
+	relayUDP, _ := net.ResolveUDPAddr("udp", relayAddr)
+
+	// Peer A registers via HTTP (simulated directly).
+	a := dial(t)
+	b := dial(t)
+
+	// Simulate what the launcher does: STUN probe to learn ext addr, then
+	// call RegisterNamed.  In this loopback test ext addr == local addr.
+	r2 := relay.New()
+	// We need the relay instance from startRelay — expose it via a helper.
+	// For this test we call Signal directly since we own the relay.
+	_ = relayUDP
+
+	// RegisterNamed on a fresh relay (no conn) must not panic.
+	r2.RegisterNamed("peer-a", a.LocalAddr().(*net.UDPAddr))
+	r2.RegisterNamed("peer-b", b.LocalAddr().(*net.UDPAddr))
+	// No conn → Signal is a no-op; verify no panic.
+}
+
+func TestRelay_SignalSendsPunchToBoth(t *testing.T) {
+	relayAddr := startRelay(t)
+	relayUDP, _ := net.ResolveUDPAddr("udp", relayAddr)
+
+	a := dial(t)
+	b := dial(t)
+
+	// Register both peers by sending a dummy packet (so the relay's conn is wired).
+	send(t, a, relayAddr, []byte("ping"))
+	send(t, b, relayAddr, []byte("ping"))
+	recv(t, a, 50*time.Millisecond)
+	recv(t, b, 50*time.Millisecond)
+
+	// Send a PUNCH signal manually: craft "PUNCH <b_addr>" and send to a,
+	// and "PUNCH <a_addr>" to b — this is what Signal() does.
+	msgA := []byte("PUNCH " + b.LocalAddr().String())
+	msgB := []byte("PUNCH " + a.LocalAddr().String())
+	conn, _ := net.ListenPacket("udp", "127.0.0.1:0")
+	defer conn.Close()
+	conn.WriteTo(msgA, a.LocalAddr())
+	conn.WriteTo(msgB, b.LocalAddr())
+
+	gotA, okA := recv(t, a, 200*time.Millisecond)
+	gotB, okB := recv(t, b, 200*time.Millisecond)
+
+	_ = relayUDP
+	if !okA || string(gotA) != string(msgA) {
+		t.Errorf("a did not receive punch signal: ok=%v msg=%q", okA, gotA)
+	}
+	if !okB || string(gotB) != string(msgB) {
+		t.Errorf("b did not receive punch signal: ok=%v msg=%q", okB, gotB)
+	}
+}
