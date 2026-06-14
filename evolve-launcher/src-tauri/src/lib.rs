@@ -32,6 +32,7 @@ pub fn run() {
             commands::launch_game,
             commands::list_steam_accounts,
             commands::add_to_steam,
+            commands::get_nat_type,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

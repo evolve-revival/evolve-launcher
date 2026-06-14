@@ -391,19 +391,112 @@ pub async fn start_update(
     start_install(app, cfg.install_dir, state).await
 }
 
+// ── Steam integration ─────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn list_steam_accounts() -> Result<Vec<crate::steam::SteamAccount>, String> {
+    let root = crate::steam::find_steam_root()
+        .ok_or_else(|| "Could not find Steam installation".to_string())?;
+    Ok(crate::steam::list_accounts(&root))
+}
+
+#[tauri::command]
+pub fn add_to_steam(app: AppHandle, steam_id: String) -> Result<(), String> {
+    let cfg = Config::load(&app);
+    if cfg.install_dir.is_empty() {
+        return Err("No install directory configured".to_string());
+    }
+    let root = crate::steam::find_steam_root()
+        .ok_or_else(|| "Could not find Steam installation".to_string())?;
+    let launcher_exe = std::env::current_exe()
+        .map_err(|e| format!("Could not resolve launcher path: {e}"))?;
+    crate::steam::add_to_steam(&root, &steam_id, &launcher_exe)
+}
+
+// ── NAT / STUN ───────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn get_nat_type(app: AppHandle) -> crate::nat::NatInfo {
+    let cfg = Config::load(&app);
+    let host = crate::patcher::extract_host(&cfg.server_url);
+    match crate::nat::probe_stun(&host, 47584) {
+        Ok(info) => info,
+        Err(_) => crate::nat::NatInfo {
+            external_ip: String::new(),
+            external_port: 0,
+            nat_type: "relay-only".to_string(),
+        },
+    }
+}
+
 // ── Launch ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn launch_game(app: AppHandle) -> Result<(), String> {
+pub async fn launch_game(app: AppHandle) -> Result<(), String> {
     let cfg = Config::load(&app);
     if cfg.install_dir.is_empty() {
         return Err("Game is not installed".to_string());
     }
+
     let exe = PathBuf::from(&cfg.install_dir).join("bin64_SteamRetail/Evolve.exe");
-    let cwd = exe.parent().unwrap_or_else(|| std::path::Path::new("."));
-    std::process::Command::new(&exe)
-        .current_dir(cwd)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("Failed to launch Evolve: {}", e))
+
+    // Start local UDP proxy before game launch so Goldberg can connect to it.
+    let relay_host = crate::patcher::extract_host(&cfg.server_url);
+    let proxy = crate::nat::start_proxy(relay_host.clone(), 47584).await?;
+
+    // Register our external endpoint with the relay so other peers can punch.
+    if let Ok(nat_info) = crate::nat::probe_stun(&relay_host, 47584) {
+        let client = reqwest::Client::new();
+        let session_id = format!("launcher-{}", nat_info.external_port);
+        let _ = client
+            .post(format!("{}/peers/register", cfg.server_url))
+            .json(&serde_json::json!({
+                "id": session_id,
+                "ip": nat_info.external_ip,
+                "port": nat_info.external_port,
+            }))
+            .send()
+            .await;
+    }
+
+    let result = {
+        #[cfg(target_os = "windows")]
+        {
+            let cwd = exe.parent().unwrap_or_else(|| std::path::Path::new("."));
+            std::process::Command::new(&exe)
+                .current_dir(cwd)
+                .spawn()
+                .map(|_| ())
+                .map_err(|e| format!("Failed to launch Evolve: {e}"))
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let steam_root = crate::steam::find_steam_root().ok_or_else(|| {
+                "Steam not found. Install Steam and Proton Experimental to play on Linux."
+                    .to_string()
+            })?;
+            let proton = crate::steam::find_proton(&steam_root).ok_or_else(|| {
+                "Proton not found. Open Steam → Tools and install Proton Experimental.".to_string()
+            })?;
+            let compat_prefix = PathBuf::from(&cfg.install_dir).join("proton_prefix");
+            std::fs::create_dir_all(&compat_prefix).map_err(|e| e.to_string())?;
+            let cwd = exe.parent().unwrap_or_else(|| std::path::Path::new("."));
+            std::process::Command::new(&proton)
+                .arg("run")
+                .arg(&exe)
+                .env("STEAM_COMPAT_DATA_PATH", &compat_prefix)
+                .env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &steam_root)
+                .current_dir(cwd)
+                .spawn()
+                .map(|_| ())
+                .map_err(|e| format!("Failed to launch via Proton ({proton:?}): {e}"))
+        }
+    };
+
+    if result.is_err() {
+        proxy.stop();
+    }
+    // On success: proxy keeps running until the launcher exits.
+    result
 }
