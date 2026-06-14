@@ -1,1 +1,26 @@
+# Rust build artifacts
+target/
+**/.cargo/
+
+# Node / frontend
+node_modules/
+dist/
+.svelte-kit/
+
+# Tauri
+evolve-launcher/src-tauri/target/
+
+# C++ build output
+evolve-shim/build/
+
+# Injector binary
 injector/dbghelp.dll
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
+
+# Logs
+*.log
