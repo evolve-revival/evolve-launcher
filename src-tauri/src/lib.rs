@@ -7,7 +7,7 @@ mod nat;
 mod patcher;
 mod steam;
 
-use commands::{AppDownloadState, ProxyState};
+use commands::AppDownloadState;
 use downloader::DownloadState;
 use std::sync::Mutex;
 
@@ -16,7 +16,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppDownloadState(Mutex::new(DownloadState::default())))
-        .manage(ProxyState(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::save_config,
@@ -34,7 +33,8 @@ pub fn run() {
             commands::launch_game,
             commands::list_steam_accounts,
             commands::add_to_steam,
-            commands::get_nat_type,
+            commands::check_donor_game,
+            commands::open_steam_store,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
