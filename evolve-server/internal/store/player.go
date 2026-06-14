@@ -47,3 +47,19 @@ func (s *PlayerStore) UpsertBySteamId(steamId, displayName string) (*Player, err
 	}
 	return &p, nil
 }
+
+// GetById fetches a player by their internal UUID. Returns nil, nil if not found.
+func (s *PlayerStore) GetById(id string) (*Player, error) {
+	var p Player
+	err := s.db.QueryRow(
+		`SELECT id, steam_id, display_name, created_at FROM players WHERE id = $1`,
+		id,
+	).Scan(&p.Id, &p.SteamId, &p.DisplayName, &p.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query player: %w", err)
+	}
+	return &p, nil
+}

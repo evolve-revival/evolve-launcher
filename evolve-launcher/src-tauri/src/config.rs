@@ -3,7 +3,7 @@ use std::fs;
 use tauri::Manager;
 
 fn default_server_url() -> String {
-    "http://localhost:8080".to_string()
+    "https://evolve.navitank.org".to_string()
 }
 
 fn default_active_version() -> String {
@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn default_config_has_default_server_url() {
         let cfg = Config::default();
-        assert_eq!(cfg.server_url, "http://localhost:8080");
+        assert_eq!(cfg.server_url, "https://evolve.navitank.org");
     }
 
     #[test]
@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn missing_fields_use_defaults_on_deserialize() {
         let cfg: Config = serde_json::from_str("{}").unwrap();
-        assert_eq!(cfg.server_url, "http://localhost:8080");
+        assert_eq!(cfg.server_url, "https://evolve.navitank.org");
         assert_eq!(cfg.active_version_id, "evolve");
     }
 
