@@ -9,8 +9,10 @@
   import TierView from './lib/TierView.svelte';
   import ProgressView from './lib/ProgressView.svelte';
   import ComponentsView from './lib/ComponentsView.svelte';
+  import SteamSetupView from './lib/SteamSetupView.svelte';
+  import VersionsView from './lib/VersionsView.svelte';
 
-  type View = 'main' | 'settings' | 'tiers' | 'components';
+  type View = 'main' | 'settings' | 'tiers' | 'components' | 'versions';
 
   let appState = $state<AppState>('not-installed');
   let view = $state<View>('main');
@@ -23,7 +25,7 @@
     appState = status.state;
     installDir = status.install_dir;
 
-    await listen('install-complete', () => { appState = 'ready'; });
+    await listen('install-complete', () => { appState = 'steam-setup'; });
     await listen('repair-complete',  () => { appState = 'ready'; });
     await listen('install-paused',   () => { appState = 'paused'; });
     await listen('install-error',    () => { appState = installDir ? 'paused' : 'not-installed'; });
@@ -63,9 +65,17 @@
     selectedBytes = totalBytes;
     view = 'main';
   }
+
+  function onVersionSwitched(status: InstallStatus) {
+    appState = status.state;
+    installDir = status.install_dir;
+    view = 'main';
+  }
 </script>
 
-{#if appState === 'not-installed'}
+{#if appState === 'steam-setup'}
+  <SteamSetupView onDone={() => { appState = 'ready'; }} />
+{:else if appState === 'not-installed'}
   {#if view === 'tiers'}
     <TierView
       onBack={() => (view = 'main')}
@@ -91,6 +101,8 @@
     onPause={onPause}
     onResume={onResume}
   />
+{:else if view === 'versions'}
+  <VersionsView onBack={() => (view = 'main')} onSwitched={onVersionSwitched} />
 {:else if view === 'settings'}
   <Settings onBack={() => (view = 'main')} />
 {:else}
@@ -98,5 +110,6 @@
     {appState}
     onSettings={() => (view = 'settings')}
     onRepair={onRepair}
+    onVersions={() => (view = 'versions')}
   />
 {/if}
