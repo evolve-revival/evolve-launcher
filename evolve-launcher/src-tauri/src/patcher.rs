@@ -5,6 +5,10 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+/// The address Goldberg should send peer-discovery packets to.
+/// Pointing at localhost lets the launcher's local proxy intercept them.
+pub const PROXY_LOCAL_HOST: &str = "127.0.0.1";
+
 /// Parse the hostname from a URL like "https://host:port/path" → "host"
 pub fn extract_host(url: &str) -> String {
     let without_scheme = url.find("://").map(|i| &url[i + 3..]).unwrap_or(url);
@@ -83,12 +87,14 @@ pub async fn apply_patches(
         .map_err(|e| format!("Failed to write EvolveLogging.ini: {}", e))?;
 
     // Write custom_broadcasts.txt so Goldberg sends UDP peer-discovery packets
-    // to the revival server's relay instead of relying on LAN broadcast.
+    // to localhost, where the launcher's local proxy intercepts them.
     let settings_dir = bin_dir.join("steam_settings");
     std::fs::create_dir_all(&settings_dir).map_err(|e| e.to_string())?;
-    let host = extract_host(server_url);
-    std::fs::write(settings_dir.join("custom_broadcasts.txt"), format!("{host}\n"))
-        .map_err(|e| format!("Failed to write custom_broadcasts.txt: {}", e))
+    std::fs::write(
+        settings_dir.join("custom_broadcasts.txt"),
+        format!("{PROXY_LOCAL_HOST}\n"),
+    )
+    .map_err(|e| format!("Failed to write custom_broadcasts.txt: {}", e))
 }
 
 #[cfg(test)]
@@ -145,5 +151,10 @@ mod tests {
         assert_eq!(extract_host("https://revival.example.com:8443/"), "revival.example.com");
         assert_eq!(extract_host("http://192.168.1.50:8080"), "192.168.1.50");
         assert_eq!(extract_host("https://play.evolve-revival.com"), "play.evolve-revival.com");
+    }
+
+    #[test]
+    fn custom_broadcasts_uses_localhost() {
+        assert_eq!(PROXY_LOCAL_HOST, "127.0.0.1");
     }
 }
