@@ -635,15 +635,8 @@ async fn log_request(req: Request<Body>, next: Next) -> Response {
     let (parts, body) = req.into_parts();
     let bytes = axum::body::to_bytes(body, 4 * 1024 * 1024).await.unwrap_or_default();
 
-    // Log request body for auth/profile paths to diagnose kando protocol
-    let path = uri.path();
-    if method == axum::http::Method::POST
-        && (path.contains("auth/two_k")
-            || path.contains("profile/")
-            || path.contains("/doorman/")
-            || path.contains("/singlesignon/"))
-        && !bytes.is_empty()
-    {
+    // Log all request bodies to diagnose kando protocol
+    if !bytes.is_empty() {
         let _ = std::fs::OpenOptions::new()
             .create(true).append(true)
             .open("/home/navitank/Desktop/EvolveFilesLegacy/request_body.log")
@@ -750,12 +743,40 @@ async fn doorman_config() -> Json<Value> {
     }))
 }
 
-async fn two_k_auth(Path(player_id): Path<String>, _body: axum::body::Bytes) -> Json<Value> {
+// The DLL (EvolveLegacyRebornServer.dll) sends a 2K-internal UUID as `2k_player_id`
+// in the binary protobuf auth body (e.g. "2357d522a223d8d57b05071505274b6b"). It
+// also hardcodes that same UUID in its embedded checkAppOwnership/grants responses,
+// which it serves internally without hitting our server. If we return a different
+// playerId (like the Steam ID URL param), kando's session state won't match the
+// DLL's hardcoded entitlement data and my2K fails. Extract the UUID from the body.
+fn extract_2k_uuid(body: &[u8], field_name: &[u8]) -> Option<String> {
+    let pos = body.windows(field_name.len()).position(|w| w == field_name)?;
+    let is_hex = |c: u8| matches!(c, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F');
+    // Search the 128 bytes before the field name for a 32-char hex UUID.
+    // Scan from the end (closest to the field name) to avoid matching an earlier
+    // field like 2k_platform_id when we want 2k_player_id.
+    let lo = pos.saturating_sub(128);
+    let region = &body[lo..pos];
+    for i in (0..region.len()).rev() {
+        if i + 32 <= region.len() && region[i..i+32].iter().all(|&c| is_hex(c)) {
+            let before_ok = i == 0 || !is_hex(region[i - 1]);
+            let after_ok = i + 32 == region.len() || !is_hex(region[i + 32]);
+            if before_ok && after_ok {
+                return String::from_utf8(region[i..i+32].to_vec()).ok();
+            }
+        }
+    }
+    None
+}
+
+async fn two_k_auth(Path(steam_id): Path<String>, body: axum::body::Bytes) -> Json<Value> {
+    let two_k_id = extract_2k_uuid(&body, b"2k_player_id")
+        .unwrap_or_else(|| steam_id.clone());
     kando_ok(json!({
         "accessToken": Uuid::new_v4().to_string(),
         "expiresIn": 86400,
         "tokenType": "Bearer",
-        "playerId": player_id,
+        "playerId": two_k_id,
         "sessionId": Uuid::new_v4().to_string(),
         "refreshToken": Uuid::new_v4().to_string(),
         "refreshExpiresIn": 86400,
@@ -765,11 +786,14 @@ async fn two_k_auth(Path(player_id): Path<String>, _body: axum::body::Bytes) -> 
     }))
 }
 
-async fn profile_get(Path(player_id): Path<String>, _body: axum::body::Bytes) -> Json<Value> {
+async fn profile_get(Path(steam_id): Path<String>, body: axum::body::Bytes) -> Json<Value> {
+    let two_k_id = extract_2k_uuid(&body, b"guid")
+        .or_else(|| extract_2k_uuid(&body, b"2k_player_id"))
+        .unwrap_or_else(|| steam_id.clone());
     kando_ok(json!({
         "player": {
-            "publicId": player_id.clone(),
-            "platformAccountId": player_id,
+            "publicId": two_k_id.clone(),
+            "platformAccountId": steam_id,
             "alias": "Player",
             "isNewPlayer": false,
             "hasPlayedApp": true,
