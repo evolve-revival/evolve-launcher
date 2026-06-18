@@ -1,0 +1,6 @@
+[build]
+# Keep Rust artifacts out of the project directory entirely.
+# The evolve-launcher Tauri build otherwise fills src-tauri/target/ with ~5-13 GB
+# of compiled crates. Redirecting to ~/.cargo/targets keeps the repo folder lean
+# and puts all build output in one place that's easy to wipe.
+target-dir = "/home/navitank/.cargo/targets/evolve-launcher"
