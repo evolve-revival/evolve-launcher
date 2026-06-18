@@ -556,7 +556,41 @@ pub async fn launch_game(app: AppHandle, server_state: tauri::State<'_, crate::L
     }
 
     let _ = std::fs::write("/tmp/evolve_launch.log", "step2: dll check ok\n");
-    // Pre-flight 2: rewrite EvolveLogging.ini — always use 127.0.0.1 so pinenut's
+
+    // Pre-flight 2: ensure iptables redirects 127.0.0.1:443 → 4430 on Linux.
+    // The kando client always dials port 443; our server binds 4430 to stay
+    // unprivileged. The rule is idempotent (-C checks before -A adds).
+    #[cfg(target_os = "linux")]
+    {
+        let rule = ["-t", "nat", "-A", "OUTPUT", "-o", "lo", "-p", "tcp",
+                    "--dport", "443", "-d", "127.0.0.1", "-j", "REDIRECT", "--to-port", "4430"];
+        let check = ["-t", "nat", "-C", "OUTPUT", "-o", "lo", "-p", "tcp",
+                     "--dport", "443", "-d", "127.0.0.1", "-j", "REDIRECT", "--to-port", "4430"];
+        let already = std::process::Command::new("sudo")
+            .arg("iptables")
+            .args(check)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !already {
+            let ok = std::process::Command::new("sudo")
+                .arg("iptables")
+                .args(rule)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !ok {
+                return Err(
+                    "Could not set up port redirect (iptables 443→4430). \
+                     Run once manually: sudo iptables -t nat -A OUTPUT -o lo -p tcp \
+                     --dport 443 -d 127.0.0.1 -j REDIRECT --to-port 4430".to_string()
+                );
+            }
+        }
+        let _ = std::fs::write("/tmp/evolve_launch.log", "step2b: iptables redirect ok\n");
+    }
+
+    // Pre-flight 3: rewrite EvolveLogging.ini — always use 127.0.0.1 so pinenut's
     // GetAddrInfoW hook redirects *.my.2k.com to our local server, not the configured
     // external server_url (which may resolve to a remote IP, breaking cURL connections).
     let ini = crate::patcher::generate_logging_ini("https://127.0.0.1:443");
