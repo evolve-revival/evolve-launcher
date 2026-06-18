@@ -432,7 +432,7 @@ pub struct DonorStatus {
 #[tauri::command]
 pub fn check_donor_game(app: AppHandle) -> DonorStatus {
     let cfg = Config::load(&app);
-    let donor_name = format!("App ID {}", crate::donor::DONOR_APP_ID);
+    let donor_name = format!("{} (App ID {})", crate::donor::DONOR_NAME, crate::donor::DONOR_APP_ID);
 
     let steam_root = match crate::steam::find_steam_root() {
         Some(r) => r,
@@ -528,7 +528,8 @@ pub fn open_steam_store(app_id: u32) {
 // ── Launch ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn launch_game(app: AppHandle) -> Result<(), String> {
+pub async fn launch_game(app: AppHandle, server_state: tauri::State<'_, crate::LocalServerState>) -> Result<(), String> {
+    let _ = std::fs::write("/tmp/evolve_launch.log", "launch_game: started\n");
     let cfg = Config::load(&app);
     let game_install_dir = cfg.active_version().install_dir.clone();
     if game_install_dir.is_empty() {
@@ -537,6 +538,7 @@ pub async fn launch_game(app: AppHandle) -> Result<(), String> {
 
     let bin_dir = PathBuf::from(&game_install_dir).join("bin64_SteamRetail");
     let exe = bin_dir.join("Evolve.exe");
+    let _ = std::fs::write("/tmp/evolve_launch.log", format!("step1: install_dir={game_install_dir}, exe={exe:?}\n"));
 
     // Pre-flight 1: ensure steam_api64_real.dll is present (copy if missing)
     let real_dll = bin_dir.join(crate::donor::REAL_STEAM_API_DLL);
@@ -545,14 +547,19 @@ pub async fn launch_game(app: AppHandle) -> Result<(), String> {
             .ok_or_else(|| "Steam not found — install Steam to play".to_string())?;
         let donor_dir = crate::steam::find_donor_game_dir(&steam_root, crate::donor::DONOR_APP_ID)
             .ok_or_else(|| format!(
-                "Donor game (App ID {}) not installed — add it to your Steam library first",
-                crate::donor::DONOR_APP_ID
+                "{} (App ID {}) is not installed — install it via steam://run/{}",
+                crate::donor::DONOR_NAME,
+                crate::donor::DONOR_APP_ID,
+                crate::donor::DONOR_APP_ID,
             ))?;
         crate::steam::copy_steam_api_dll(&donor_dir, &bin_dir)?;
     }
 
-    // Pre-flight 2: rewrite EvolveLogging.ini in case config drifted
-    let ini = crate::patcher::generate_logging_ini(&cfg.server_url);
+    let _ = std::fs::write("/tmp/evolve_launch.log", "step2: dll check ok\n");
+    // Pre-flight 2: rewrite EvolveLogging.ini — always use 127.0.0.1 so pinenut's
+    // GetAddrInfoW hook redirects *.my.2k.com to our local server, not the configured
+    // external server_url (which may resolve to a remote IP, breaking cURL connections).
+    let ini = crate::patcher::generate_logging_ini("https://127.0.0.1:443");
     std::fs::write(bin_dir.join("EvolveLogging.ini"), ini)
         .map_err(|e| format!("Failed to write EvolveLogging.ini: {e}"))?;
 
@@ -569,12 +576,14 @@ pub async fn launch_game(app: AppHandle) -> Result<(), String> {
     }
     #[cfg(not(target_os = "windows"))]
     {
+        let _ = std::fs::write("/tmp/evolve_launch.log", "step3: checking steam\n");
         let steam_running = std::process::Command::new("pgrep")
             .arg("-x")
             .arg("steam")
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
+        let _ = std::fs::write("/tmp/evolve_launch.log", format!("step3: steam_running={steam_running}\n"));
         if !steam_running {
             return Err("Steam is not running — please start Steam and log in first".to_string());
         }
@@ -600,15 +609,41 @@ pub async fn launch_game(app: AppHandle) -> Result<(), String> {
         })?;
         let compat_prefix = PathBuf::from(&game_install_dir).join("proton_prefix");
         std::fs::create_dir_all(&compat_prefix).map_err(|e| e.to_string())?;
-        let cwd = exe.parent().unwrap_or_else(|| std::path::Path::new("."));
-        std::process::Command::new(&proton)
+        let cwd = exe.parent().unwrap_or_else(|| std::path::Path::new(".")).to_path_buf();
+
+        // Start server only if not already running (it lives for the app's lifetime)
+        let server_already_running = {
+            let guard = server_state.0.lock().unwrap();
+            guard.is_some()
+        };
+        if !server_already_running {
+            let _ = std::fs::write("/tmp/evolve_launch.log", format!("step4: starting local server, game_root={game_install_dir}\n"));
+            let server = crate::local_server::start(std::path::Path::new(&game_install_dir)).await
+                .map_err(|e| { let _ = std::fs::write("/tmp/evolve_launch.log", format!("step4 FAILED: {e}\n")); e })?;
+            let _ = std::fs::write("/tmp/evolve_launch.log", "step5: server ok, spawning proton\n");
+            let mut guard = server_state.0.lock().unwrap();
+            *guard = Some(server);
+        } else {
+            let _ = std::fs::write("/tmp/evolve_launch.log", "step4+5: server already running\n");
+        }
+
+        let mut child = tokio::process::Command::new(&proton)
             .arg("run")
             .arg(&exe)
             .env("STEAM_COMPAT_DATA_PATH", &compat_prefix)
             .env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &steam_root)
-            .current_dir(cwd)
+            .env("SteamAppId", crate::donor::DONOR_APP_ID.to_string())
+            .current_dir(&cwd)
             .spawn()
-            .map(|_| ())
-            .map_err(|e| format!("Failed to launch via Proton ({proton:?}): {e}"))
+            .map_err(|e| format!("Failed to launch via Proton ({proton:?}): {e}"))?;
+
+        app.emit("game-launched", ()).ok();
+
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+            app.emit("game-exited", ()).ok();
+        });
+
+        Ok(())
     }
 }

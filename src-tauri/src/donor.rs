@@ -6,6 +6,9 @@
 /// every Steam account via steam://run/480. Intended for exactly this use case.
 pub const DONOR_APP_ID: u32 = 480;
 
+/// Human-readable name shown in the UI and error messages.
+pub const DONOR_NAME: &str = "SpaceWar";
+
 /// The filename of the real Steamworks DLL after we rename it.
 pub const REAL_STEAM_API_DLL: &str = "steam_api64_real.dll";
 
