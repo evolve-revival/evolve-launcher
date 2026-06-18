@@ -557,7 +557,19 @@ pub async fn launch_game(app: AppHandle, server_state: tauri::State<'_, crate::L
 
     let _ = std::fs::write("/tmp/evolve_launch.log", "step2: dll check ok\n");
 
-    // Pre-flight 2: ensure iptables redirects 127.0.0.1:443 → 4430 on Linux.
+    // Pre-flight 2: remove precache.m2k so kando can't use Pinenut's stale service
+    // config. precache epochs (~1781M) always beat our cache.m2k epochs (~1448M),
+    // so every post-auth call (checkAppOwnership, grants, etc.) gets served from
+    // Pinenut's bundled cache instead of hitting our live server. Without precache,
+    // kando falls through to cache.m2k (our live doorman response) and makes fresh
+    // requests we can actually answer.
+    let precache_path = PathBuf::from(&game_install_dir).join("precache.m2k");
+    if precache_path.exists() {
+        let _ = std::fs::remove_file(&precache_path);
+        let _ = std::fs::write("/tmp/evolve_launch.log", "step2a: removed precache.m2k\n");
+    }
+
+    // Pre-flight 3: ensure iptables redirects 127.0.0.1:443 → 4430 on Linux.
     // The kando client always dials port 443; our server binds 4430 to stay
     // unprivileged. The rule is idempotent (-C checks before -A adds).
     #[cfg(target_os = "linux")]
