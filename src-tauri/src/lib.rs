@@ -3,6 +3,7 @@ mod config;
 mod donor;
 mod downloader;
 mod install;
+mod local_server;
 mod nat;
 mod patcher;
 mod steam;
@@ -11,11 +12,14 @@ use commands::AppDownloadState;
 use downloader::DownloadState;
 use std::sync::Mutex;
 
+pub struct LocalServerState(pub Mutex<Option<local_server::LocalServer>>);
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppDownloadState(Mutex::new(DownloadState::default())))
+        .manage(LocalServerState(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::save_config,
