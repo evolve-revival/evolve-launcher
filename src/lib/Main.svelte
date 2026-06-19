@@ -78,8 +78,8 @@
     <div class="launch-error">{launchError}</div>
   {/if}
 
-  <button class="play-btn" onclick={play} disabled={!canPlay || launching}>
-    {launching ? 'LAUNCHING...' : 'PLAY'}
+  <button class="play-btn" onclick={play} disabled={!canPlay || launching || appState === 'playing'} class:playing={appState === 'playing'}>
+    {appState === 'playing' ? 'PLAYING' : launching ? 'LAUNCHING...' : 'PLAY'}
   </button>
 
   <div class="footer">

@@ -43,7 +43,8 @@ export type AppState =
   | 'ready'
   | 'update-available'
   | 'repairing'
-  | 'steam-setup';
+  | 'steam-setup'
+  | 'playing';
 
 export interface SteamAccount {
   steam_id: string;
