@@ -602,12 +602,12 @@ pub async fn start(game_root: &std::path::Path) -> Result<LocalServer, String> {
 
 }
 
-fn inst(host: &str, actions: &[&str]) -> Value {
+fn inst(host: &str, base_uri: &str, actions: &[&str]) -> Value {
     json!({
         "protocol": "https",
         "host": host,
         "port": 443,
-        "baseUri": "/",
+        "baseUri": base_uri,
         "actions": actions,
         "isProduction": true,
     })
@@ -673,19 +673,20 @@ fn build_router() -> Router {
         .route("/apps/1/find", post(apps_find))
         .route("/sessions/1/create", post(session_create))
         .route("/sessions/1/heartbeat", post(heartbeat))
-        .route("/entitlements/1/appOwnership/{group}", get(app_ownership))
-        .route("/entitlements/1/checkAppOwnership/{group}", get(app_ownership))
+        .route("/entitlements/1/appOwnership/{group}", get(app_ownership).post(app_ownership))
+        .route("/entitlements/1/checkAppOwnership/{group}", get(app_ownership).post(app_ownership))
         .route(
             "/entitlements/1/firstPartyMapping/{platform}/{platform_id}",
-            get(entitlements_all),
+            get(entitlements_all).post(entitlements_all),
         )
-        .route("/entitlements/1/mapping/{group}", get(entitlements_all))
+        .route("/entitlements/1/mapping/{group}", get(entitlements_all).post(entitlements_all))
+        .route("/entitlements/1/grants/find", post(grants_find))
         .route("/status", get(server_status))
         .route("/build_config", get(build_config))
         .route("/heartbeat", post(heartbeat))
-        .route("/stats/1/configs", get(stats_configs))
+        .route("/stats/1/configs", get(stats_configs).post(stats_configs))
         .route("/grants/1/find", post(grants_find))
-        .route("/queue/waittime", get(queue_waittime))
+        .route("/queue/waittime", get(queue_waittime).post(queue_waittime))
         .fallback(stub_ok)
         .layer(axum::middleware::from_fn(log_request))
 }
@@ -708,18 +709,18 @@ async fn doorman_config() -> Json<Value> {
         "platformType": 1,
         "onlineServicePlatform": 1,
         "services": [
-            {"serviceName": "doorman",      "serviceInstances": [inst("api.my.2k.com", &["configs.generate"])]},
-            {"serviceName": "content",      "serviceInstances": [inst("api.my.2k.com", &["configs.generate"])]},
-            {"serviceName": "singlesignon", "serviceInstances": [inst("api.my.2k.com", &["auths.logon", "auth.two_k", "profile.get_by_platform_account_id"])]},
-            {"serviceName": "sessions",     "serviceInstances": [inst("api.my.2k.com", &["heartbeat", "create"])]},
-            {"serviceName": "apps",         "serviceInstances": [inst("api.my.2k.com", &["find"])]},
-            {"serviceName": "entitlements", "serviceInstances": [inst("api.my.2k.com", &["checkAppOwnership", "entitlementDefs.getFirstPartyMapping", "grants.find"])]},
-            {"serviceName": "players",      "serviceInstances": [inst("api.my.2k.com", &["find", "get"])]},
-            {"serviceName": "storage",      "serviceInstances": [inst("api.my.2k.com", &["storage.get", "storage.put"])]},
-            {"serviceName": "storefront",   "serviceInstances": [inst("api.my.2k.com", &["configs.generate"])]},
-            {"serviceName": "telemetry",    "serviceInstances": [inst("api.my.2k.com", &["telemetry.configs"])]},
-            {"serviceName": "stats",        "serviceInstances": [inst("api.my.2k.com", &["configs.generate"])]},
-            {"serviceName": "news",         "serviceInstances": [inst("api.my.2k.com", &["configs.generate"])]},
+            {"serviceName": "doorman",      "serviceInstances": [inst("api.my.2k.com", "doorman/1",      &[])]},
+            {"serviceName": "content",      "serviceInstances": [inst("api.my.2k.com", "content/1",      &[])]},
+            {"serviceName": "singlesignon", "serviceInstances": [inst("api.my.2k.com", "sso/1",          &[])]},
+            {"serviceName": "sessions",     "serviceInstances": [inst("api.my.2k.com", "sessions/1",     &[])]},
+            {"serviceName": "apps",         "serviceInstances": [inst("api.my.2k.com", "apps/1",         &[])]},
+            {"serviceName": "entitlements", "serviceInstances": [inst("api.my.2k.com", "entitlements/1", &[])]},
+            {"serviceName": "players",      "serviceInstances": [inst("api.my.2k.com", "players/1",      &[])]},
+            {"serviceName": "storage",      "serviceInstances": [inst("api.my.2k.com", "storage/1",      &[])]},
+            {"serviceName": "storefront",   "serviceInstances": [inst("api.my.2k.com", "storefront/1",   &[])]},
+            {"serviceName": "telemetry",    "serviceInstances": [inst("api.my.2k.com", "telemetry/1",    &[])]},
+            {"serviceName": "stats",        "serviceInstances": [inst("api.my.2k.com", "stats/1",        &[])]},
+            {"serviceName": "news",         "serviceInstances": [inst("api.my.2k.com", "news/1",         &[])]},
         ],
         "clientConfigSettings": {
             "doormanConnectTimeout": 5000,
@@ -734,6 +735,7 @@ async fn doorman_config() -> Json<Value> {
             "restLogToFileModeMin": false,
             "restLogToFileModeMax": false,
             "restLogToFileMode": true,
+            "restLogToFilePath": "rest.log",
             "autoCacheLogin": false,
             "minRequestTimeout": 3000,
             "assertTelemetry": false,

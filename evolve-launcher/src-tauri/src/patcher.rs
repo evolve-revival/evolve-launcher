@@ -36,20 +36,21 @@ pub fn extract_port(url: &str) -> u16 {
 }
 
 /// Generate EvolveLogging.ini content pointing at the revival server,
-/// using the real Steamworks shim instead of Goldberg.
+/// Generate EvolveLogging.ini for the revival server.
+/// emu_steam = true: Pinenut uses its Goldberg emulator for Steam identity
+/// (hooks GetEnvironmentVariableA + RegQueryValueExA so SteamAPI_Init works
+/// without the game being in Steam's library).
 pub fn generate_logging_ini(server_url: &str) -> String {
     let host = extract_host(server_url);
-    let port = extract_port(server_url);
     format!(
         "[server]\n\
          server_domain = {host}\n\
-         server_port = {port}\n\
+         server_port = 443\n\
          use_internal_server = false\n\
          \n\
          [steam]\n\
-         emu_steam = false\n\
-         dll_path = {}\n",
-        donor::SHIM_DLL
+         emu_steam = true\n\
+         dll_path = GoldbergNewEvolveEmu.dll\n"
     )
 }
 
@@ -126,19 +127,18 @@ mod tests {
         let ini = generate_logging_ini("https://revival.example.com:8443");
         assert!(ini.contains("[server]"));
         assert!(ini.contains("server_domain = revival.example.com"));
-        assert!(ini.contains("server_port = 8443"));
+        assert!(ini.contains("server_port = 443"));
         assert!(ini.contains("use_internal_server = false"));
         assert!(ini.contains("[steam]"));
-        assert!(ini.contains("emu_steam = false"));
-        assert!(ini.contains("dll_path = evolve_shim.dll"));
-        assert!(!ini.contains("GoldbergNewEvolveEmu.dll"));
+        assert!(ini.contains("emu_steam = true"));
+        assert!(ini.contains("dll_path = GoldbergNewEvolveEmu.dll"));
     }
 
     #[test]
     fn generates_ini_with_default_https_port() {
         let ini = generate_logging_ini("https://play.evolve-community.net");
         assert!(ini.contains("server_port = 443"));
-        assert!(ini.contains("emu_steam = false"));
+        assert!(ini.contains("emu_steam = true"));
     }
 
     #[test]
