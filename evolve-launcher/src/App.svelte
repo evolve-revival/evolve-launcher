@@ -29,6 +29,8 @@
     await listen('repair-complete',  () => { appState = 'ready'; });
     await listen('install-paused',   () => { appState = 'paused'; });
     await listen('install-error',    () => { appState = installDir ? 'paused' : 'not-installed'; });
+    await listen('game-launched',    () => { appState = 'playing'; });
+    await listen('game-exited',      () => { appState = 'ready'; });
 
     if (appState === 'ready') {
       invoke<boolean>('check_for_updates').then(hasUpdate => {
