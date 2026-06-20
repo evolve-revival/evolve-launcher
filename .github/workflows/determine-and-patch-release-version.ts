@@ -72,24 +72,32 @@ if (ref.startsWith("refs/tags/v")) {
     safeVersion = `${safeVersion}-dev-${datesegment}+${hash}`;
 } else {
     throw new Error(
-        "invalid state. GITHUB_REF is not missing, but neither a refs/heads/, nor a refs/tags/v",
+        "invalid state. GITHUB_REF is not missing, but neither a refs/heads/, nor a refs/tags/v exists",
     );
 }
 
+const tag = channel === "dev" ? "" : "v" + safeVersion
+const prerelease = (channel === "beta") + ""
+// debug info
+console.error({
+    GITHUB_RELEASE_CHANNEL: channel,
+    GITHUB_TAG_NAME: tag,
+    GITHUB_TAG_PRERELEASE: prerelease
+})
 // we write a file containing the relevant release channel for the next step
 await writeFile(
-    join(dirLocation, "..", ".GITHUB_RELEASE_CHANNEL"),
+    join(dirLocation, "..", "..", ".GITHUB_RELEASE_CHANNEL"),
     channel,
     "utf-8",
 );
 await writeFile(
-    join(dirLocation, "..", ".GITHUB_TAG_NAME"),
-    channel === "dev" ? "" : "v" + safeVersion,
+    join(dirLocation, "..", "..", ".GITHUB_TAG_NAME"),
+    tag,
     "utf-8",
 );
 await writeFile(
-    join(dirLocation, "..", ".GITHUB_TAG_PRERELEASE"),
-    "" + (channel === "beta"),
+    join(dirLocation, "..", "..", ".GITHUB_TAG_PRERELEASE"),
+    prerelease,
     "utf-8",
 );
 
