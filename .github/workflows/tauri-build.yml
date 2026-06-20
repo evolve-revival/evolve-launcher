@@ -41,29 +41,26 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
-      - name: Setup PNPM
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11
-          run_install: true
+      - run: corepack enable
+      - run: corepack prepare pnpm@11 --activate
+      - run: pnpm --version
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
           # Those targets are only used on macos runners so it's in an `if` to slightly speed up windows and linux builds.
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
-
       - name: install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
+      - name: Install frontend deps
+        run: |
+          pnpm ci
       - name: Patch Launcher Build Version
         # Note: this determines which version we should use
         # and writes the result into files .GITHUB_TAG_NAME and .GITHUB_TAG_PRERELEASE
