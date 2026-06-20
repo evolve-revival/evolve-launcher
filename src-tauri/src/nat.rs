@@ -79,8 +79,8 @@ pub fn probe_stun(relay_host: &str, relay_port: u16) -> Result<NatInfo, String> 
         .recv_from(&mut buf)
         .map_err(|_| "STUN timeout — relay unreachable".to_string())?;
 
-    let (ext_ip, ext_port) = parse_xor_mapped_address(&buf[..n])
-        .ok_or_else(|| "Malformed STUN response".to_string())?;
+    let (ext_ip, ext_port) =
+        parse_xor_mapped_address(&buf[..n]).ok_or_else(|| "Malformed STUN response".to_string())?;
 
     Ok(NatInfo {
         external_ip: ext_ip,
@@ -244,7 +244,12 @@ pub async fn start_proxy(
         })
     };
 
-    Ok((ProxyHandle { tasks: vec![handle_a, handle_b] }, relay_external))
+    Ok((
+        ProxyHandle {
+            tasks: vec![handle_a, handle_b],
+        },
+        relay_external,
+    ))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────

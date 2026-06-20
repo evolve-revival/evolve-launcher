@@ -95,7 +95,10 @@ fn parse_loginusers(content: &str, steam_root: &Path) -> Vec<SteamAccount> {
                 // Lines at this depth are SteamID64 object keys: "76561198XXXXXXX"
                 if let Some(id) = extract_sole_quoted(t) {
                     // SteamID64 is always 17 digits starting with 7656.
-                    if id.len() == 17 && id.starts_with("7656") && id.chars().all(|c| c.is_ascii_digit()) {
+                    if id.len() == 17
+                        && id.starts_with("7656")
+                        && id.chars().all(|c| c.is_ascii_digit())
+                    {
                         current_id = Some(id);
                         persona.clear();
                         account_name.clear();
@@ -120,23 +123,33 @@ fn parse_loginusers(content: &str, steam_root: &Path) -> Vec<SteamAccount> {
 
 // Returns the string inside quotes if the line is just a single quoted token.
 fn extract_sole_quoted(s: &str) -> Option<String> {
-    if !s.starts_with('"') { return None; }
+    if !s.starts_with('"') {
+        return None;
+    }
     let inner = &s[1..];
     let end = inner.find('"')?;
     let key = &inner[..end];
     let rest = inner[end + 1..].trim();
     // "sole" means nothing follows the closing quote.
-    if rest.is_empty() { Some(key.to_string()) } else { None }
+    if rest.is_empty() {
+        Some(key.to_string())
+    } else {
+        None
+    }
 }
 
 // Parses `"key"\t"value"` or `"key" "value"`.
 fn parse_kv(s: &str) -> Option<(String, String)> {
-    if !s.starts_with('"') { return None; }
+    if !s.starts_with('"') {
+        return None;
+    }
     let after_open = &s[1..];
     let key_end = after_open.find('"')?;
     let key = after_open[..key_end].to_string();
     let after_key = after_open[key_end + 1..].trim();
-    if !after_key.starts_with('"') { return None; }
+    if !after_key.starts_with('"') {
+        return None;
+    }
     let val_inner = &after_key[1..];
     let val_end = val_inner.rfind('"')?;
     Some((key, val_inner[..val_end].to_string()))
@@ -178,8 +191,13 @@ fn bvdf_parse_item(data: &[u8], pos: &mut usize) -> Result<(String, Bvdf), Strin
         VDF_MAP => {
             let mut children = Vec::new();
             loop {
-                if *pos >= data.len() { break; }
-                if data[*pos] == VDF_END { *pos += 1; break; }
+                if *pos >= data.len() {
+                    break;
+                }
+                if data[*pos] == VDF_END {
+                    *pos += 1;
+                    break;
+                }
                 children.push(bvdf_parse_item(data, pos)?);
             }
             Ok((key, Bvdf::Map(children)))
@@ -189,20 +207,29 @@ fn bvdf_parse_item(data: &[u8], pos: &mut usize) -> Result<(String, Bvdf), Strin
             Ok((key, Bvdf::Str(val)))
         }
         VDF_INT => {
-            if *pos + 4 > data.len() { return Err("truncated int32".into()); }
+            if *pos + 4 > data.len() {
+                return Err("truncated int32".into());
+            }
             let val = u32::from_le_bytes(data[*pos..*pos + 4].try_into().unwrap());
             *pos += 4;
             Ok((key, Bvdf::Int(val)))
         }
-        other => Err(format!("unknown VDF type 0x{other:02x} at byte {}", *pos - 1)),
+        other => Err(format!(
+            "unknown VDF type 0x{other:02x} at byte {}",
+            *pos - 1
+        )),
     }
 }
 
 fn bvdf_read_cstr(data: &[u8], pos: &mut usize) -> Result<String, String> {
     let start = *pos;
-    while *pos < data.len() && data[*pos] != 0x00 { *pos += 1; }
+    while *pos < data.len() && data[*pos] != 0x00 {
+        *pos += 1;
+    }
     let s = String::from_utf8_lossy(&data[start..*pos]).into_owned();
-    if *pos < data.len() { *pos += 1; } // consume null
+    if *pos < data.len() {
+        *pos += 1;
+    } // consume null
     Ok(s)
 }
 
@@ -210,18 +237,24 @@ fn bvdf_write_item(key: &str, val: &Bvdf, out: &mut Vec<u8>) {
     match val {
         Bvdf::Map(children) => {
             out.push(VDF_MAP);
-            out.extend_from_slice(key.as_bytes()); out.push(0x00);
-            for (k, v) in children { bvdf_write_item(k, v, out); }
+            out.extend_from_slice(key.as_bytes());
+            out.push(0x00);
+            for (k, v) in children {
+                bvdf_write_item(k, v, out);
+            }
             out.push(VDF_END);
         }
         Bvdf::Str(s) => {
             out.push(VDF_STR);
-            out.extend_from_slice(key.as_bytes()); out.push(0x00);
-            out.extend_from_slice(s.as_bytes()); out.push(0x00);
+            out.extend_from_slice(key.as_bytes());
+            out.push(0x00);
+            out.extend_from_slice(s.as_bytes());
+            out.push(0x00);
         }
         Bvdf::Int(n) => {
             out.push(VDF_INT);
-            out.extend_from_slice(key.as_bytes()); out.push(0x00);
+            out.extend_from_slice(key.as_bytes());
+            out.push(0x00);
             out.extend_from_slice(&n.to_le_bytes());
         }
     }
@@ -229,23 +262,23 @@ fn bvdf_write_item(key: &str, val: &Bvdf, out: &mut Vec<u8>) {
 
 fn shortcut_entry(app_id: u32, exe: &str, start_dir: &str) -> Bvdf {
     Bvdf::Map(vec![
-        ("appid".into(),               Bvdf::Int(app_id)),
-        ("AppName".into(),             Bvdf::Str(APP_NAME.into())),
-        ("Exe".into(),                 Bvdf::Str(exe.into())),
-        ("StartDir".into(),            Bvdf::Str(start_dir.into())),
-        ("icon".into(),                Bvdf::Str(String::new())),
-        ("ShortcutPath".into(),        Bvdf::Str(String::new())),
-        ("LaunchOptions".into(),       Bvdf::Str(String::new())),
-        ("IsHidden".into(),            Bvdf::Int(0)),
-        ("AllowDesktopConfig".into(),  Bvdf::Int(1)),
-        ("AllowOverlay".into(),        Bvdf::Int(1)),
-        ("openvr".into(),              Bvdf::Int(0)),
-        ("Devkit".into(),              Bvdf::Int(0)),
-        ("DevkitGameID".into(),        Bvdf::Str(String::new())),
+        ("appid".into(), Bvdf::Int(app_id)),
+        ("AppName".into(), Bvdf::Str(APP_NAME.into())),
+        ("Exe".into(), Bvdf::Str(exe.into())),
+        ("StartDir".into(), Bvdf::Str(start_dir.into())),
+        ("icon".into(), Bvdf::Str(String::new())),
+        ("ShortcutPath".into(), Bvdf::Str(String::new())),
+        ("LaunchOptions".into(), Bvdf::Str(String::new())),
+        ("IsHidden".into(), Bvdf::Int(0)),
+        ("AllowDesktopConfig".into(), Bvdf::Int(1)),
+        ("AllowOverlay".into(), Bvdf::Int(1)),
+        ("openvr".into(), Bvdf::Int(0)),
+        ("Devkit".into(), Bvdf::Int(0)),
+        ("DevkitGameID".into(), Bvdf::Str(String::new())),
         ("DevkitOverrideAppID".into(), Bvdf::Int(0)),
-        ("LastPlayTime".into(),        Bvdf::Int(0)),
-        ("FlatpakAppID".into(),        Bvdf::Str(String::new())),
-        ("tags".into(),                Bvdf::Map(vec![])),
+        ("LastPlayTime".into(), Bvdf::Int(0)),
+        ("FlatpakAppID".into(), Bvdf::Str(String::new())),
+        ("tags".into(), Bvdf::Map(vec![])),
     ])
 }
 
@@ -319,9 +352,13 @@ pub fn find_proton(steam_root: &Path) -> Option<PathBuf> {
         let as_ = an.to_string_lossy();
         let bs_ = bn.to_string_lossy();
         let rank = |s: &str| {
-            if s.contains("8.0") { 0 }
-            else if s.contains("Experimental") { 1 }
-            else { 2 }
+            if s.contains("8.0") {
+                0
+            } else if s.contains("Experimental") {
+                1
+            } else {
+                2
+            }
         };
         match rank(&as_).cmp(&rank(&bs_)) {
             std::cmp::Ordering::Equal => bs_.cmp(&as_), // tie-break: newest first
@@ -392,22 +429,18 @@ pub fn find_donor_game_dir(steam_root: &Path, app_id: u32) -> Option<PathBuf> {
 
 /// Copy steam_api64.dll from the donor game's directory into the Evolve bin dir,
 /// renaming it to steam_api64_real.dll so our shim can load it.
-pub fn copy_steam_api_dll(
-    donor_dir: &Path,
-    game_bin_dir: &Path,
-) -> Result<(), String> {
+pub fn copy_steam_api_dll(donor_dir: &Path, game_bin_dir: &Path) -> Result<(), String> {
     let candidates = [
         donor_dir.join("steam_api64.dll"),
         donor_dir.join("bin").join("steam_api64.dll"),
         donor_dir.join("bin64").join("steam_api64.dll"),
     ];
-    let src = candidates
-        .iter()
-        .find(|p| p.exists())
-        .ok_or_else(|| format!(
+    let src = candidates.iter().find(|p| p.exists()).ok_or_else(|| {
+        format!(
             "steam_api64.dll not found in donor game directory: {}",
             donor_dir.display()
-        ))?;
+        )
+    })?;
 
     let dest = game_bin_dir.join(crate::donor::REAL_STEAM_API_DLL);
     std::fs::copy(src, &dest)
@@ -425,7 +458,10 @@ mod tests {
     #[test]
     fn app_id_is_stable() {
         let id = non_steam_app_id("/games/evolve/bin64_SteamRetail/Evolve.exe", APP_NAME);
-        assert_eq!(id, non_steam_app_id("/games/evolve/bin64_SteamRetail/Evolve.exe", APP_NAME));
+        assert_eq!(
+            id,
+            non_steam_app_id("/games/evolve/bin64_SteamRetail/Evolve.exe", APP_NAME)
+        );
         assert!(id & 0x80000000 != 0, "top bit must be set");
     }
 

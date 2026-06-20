@@ -1,12 +1,11 @@
 use axum::{
-    Router,
     body::Body,
     extract::Path,
     http::Request,
     middleware::Next,
     response::Response,
     routing::{get, post},
-    Json,
+    Json, Router,
 };
 use serde_json::{json, Value};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -491,7 +490,8 @@ pub struct LocalServer {
 
 impl LocalServer {
     pub fn stop(self) {
-        self.handle.graceful_shutdown(Some(std::time::Duration::from_secs(2)));
+        self.handle
+            .graceful_shutdown(Some(std::time::Duration::from_secs(2)));
     }
 }
 
@@ -500,13 +500,17 @@ fn rsa_key_pem() -> Option<String> {
         .args(["genrsa", "2048"])
         .output()
         .ok()?;
-    if !out.status.success() { return None; }
+    if !out.status.success() {
+        return None;
+    }
     String::from_utf8(out.stdout).ok()
 }
 
 fn generate_tls_certs() -> Result<(String, String, String), String> {
-    use rcgen::{Certificate, CertificateParams, DnType, IsCa, BasicConstraints, SanType, KeyPair,
-                PKCS_RSA_SHA256, PKCS_ECDSA_P256_SHA256};
+    use rcgen::{
+        BasicConstraints, Certificate, CertificateParams, DnType, IsCa, KeyPair, SanType,
+        PKCS_ECDSA_P256_SHA256, PKCS_RSA_SHA256,
+    };
 
     // Prefer RSA 2048 so the game's TLS 1.2 libcurl can use ECDHE-RSA cipher suites.
     // Fall back to ECDSA P-256 if openssl is not on PATH (e.g. bare Windows).
@@ -525,11 +529,15 @@ fn generate_tls_certs() -> Result<(String, String, String), String> {
     let mut ca_params = CertificateParams::default();
     ca_params.alg = ca_alg;
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    ca_params.distinguished_name.push(DnType::CommonName, "Evolve Revival CA");
-    if let Some(kp) = ca_key_opt { ca_params.key_pair = Some(kp); }
-    let ca_cert = Certificate::from_params(ca_params)
-        .map_err(|e| format!("CA cert: {e}"))?;
-    let ca_pem = ca_cert.serialize_pem()
+    ca_params
+        .distinguished_name
+        .push(DnType::CommonName, "Evolve Revival CA");
+    if let Some(kp) = ca_key_opt {
+        ca_params.key_pair = Some(kp);
+    }
+    let ca_cert = Certificate::from_params(ca_params).map_err(|e| format!("CA cert: {e}"))?;
+    let ca_pem = ca_cert
+        .serialize_pem()
         .map_err(|e| format!("CA pem: {e}"))?;
 
     let mut server_params = CertificateParams::default();
@@ -542,11 +550,16 @@ fn generate_tls_certs() -> Result<(String, String, String), String> {
         SanType::DnsName("*.my.2k.com".to_string()),
         SanType::DnsName("508223012e5a5ff19f30a391b2bdadc0.my.2k.com".to_string()),
     ];
-    server_params.distinguished_name.push(DnType::CommonName, "*.my.2k.com");
-    if let Some(kp) = server_key_opt { server_params.key_pair = Some(kp); }
-    let server_cert = Certificate::from_params(server_params)
-        .map_err(|e| format!("Server cert: {e}"))?;
-    let server_cert_pem = server_cert.serialize_pem_with_signer(&ca_cert)
+    server_params
+        .distinguished_name
+        .push(DnType::CommonName, "*.my.2k.com");
+    if let Some(kp) = server_key_opt {
+        server_params.key_pair = Some(kp);
+    }
+    let server_cert =
+        Certificate::from_params(server_params).map_err(|e| format!("Server cert: {e}"))?;
+    let server_cert_pem = server_cert
+        .serialize_pem_with_signer(&ca_cert)
         .map_err(|e| format!("Server cert pem: {e}"))?;
     let server_key_pem = server_cert.serialize_private_key_pem();
 
@@ -557,12 +570,12 @@ fn patch_ca_bundle(game_root: &std::path::Path, ca_pem: &str) -> Result<(), Stri
     let bundle_path = game_root.join("ca-bundle.crt");
     let existing = std::fs::read_to_string(&bundle_path).unwrap_or_default();
     // Keep only the first cert (Pinenut's original CA), then append ours
-    let first_end = existing.find("-----END CERTIFICATE-----")
+    let first_end = existing
+        .find("-----END CERTIFICATE-----")
         .map(|i| i + "-----END CERTIFICATE-----".len())
         .unwrap_or(0);
     let new_bundle = format!("{}\n{ca_pem}", &existing[..first_end]);
-    std::fs::write(&bundle_path, new_bundle)
-        .map_err(|e| format!("Write ca-bundle.crt: {e}"))
+    std::fs::write(&bundle_path, new_bundle).map_err(|e| format!("Write ca-bundle.crt: {e}"))
 }
 
 pub async fn start(game_root: &std::path::Path) -> Result<LocalServer, String> {
@@ -582,9 +595,10 @@ pub async fn start(game_root: &std::path::Path) -> Result<LocalServer, String> {
     let addr = "127.0.0.1:4430".parse::<std::net::SocketAddr>().unwrap();
 
     // Bind synchronously first — fail fast if port is in use, no zombie listeners
-    let std_listener = std::net::TcpListener::bind(addr)
-        .map_err(|e| format!("Failed to bind {addr}: {e}"))?;
-    std_listener.set_nonblocking(true)
+    let std_listener =
+        std::net::TcpListener::bind(addr).map_err(|e| format!("Failed to bind {addr}: {e}"))?;
+    std_listener
+        .set_nonblocking(true)
         .map_err(|e| format!("nonblocking: {e}"))?;
 
     let handle = axum_server::Handle::new();
@@ -599,7 +613,6 @@ pub async fn start(game_root: &std::path::Path) -> Result<LocalServer, String> {
     });
 
     Ok(LocalServer { handle })
-
 }
 
 fn inst(host: &str, base_uri: &str, actions: &[&str]) -> Value {
@@ -633,15 +646,24 @@ async fn log_request(req: Request<Body>, next: Next) -> Response {
 
     // Buffer the body so we can log it AND still pass it to the handler
     let (parts, body) = req.into_parts();
-    let bytes = axum::body::to_bytes(body, 4 * 1024 * 1024).await.unwrap_or_default();
+    let bytes = axum::body::to_bytes(body, 4 * 1024 * 1024)
+        .await
+        .unwrap_or_default();
 
     // Log all request bodies to diagnose kando protocol
     if !bytes.is_empty() {
         let _ = std::fs::OpenOptions::new()
-            .create(true).append(true)
+            .create(true)
+            .append(true)
             .open("/home/navitank/Desktop/EvolveFilesLegacy/request_body.log")
             .and_then(|mut f| {
-                writeln!(f, "=== {} {} ===\n{}\n", method, uri, String::from_utf8_lossy(&bytes))
+                writeln!(
+                    f,
+                    "=== {} {} ===\n{}\n",
+                    method,
+                    uri,
+                    String::from_utf8_lossy(&bytes)
+                )
             });
     }
 
@@ -650,11 +672,10 @@ async fn log_request(req: Request<Body>, next: Next) -> Response {
     let resp = next.run(req).await;
 
     let _ = std::fs::OpenOptions::new()
-        .create(true).append(true)
+        .create(true)
+        .append(true)
         .open("/tmp/evolve_server.log")
-        .and_then(|mut f| {
-            writeln!(f, "{method} {uri} -> {}", resp.status())
-        });
+        .and_then(|mut f| writeln!(f, "{method} {uri} -> {}", resp.status()));
     resp
 }
 
@@ -665,7 +686,10 @@ fn build_router() -> Router {
         .route("/doorman/1/configs/generate", get(doorman_config))
         // Auth — /{steam_id}/auth/two_k and /{steam_id}/profile/...
         .route("/{player_id}/auth/two_k", post(two_k_auth))
-        .route("/{player_id}/profile/get_by_platform_account_id", post(profile_get))
+        .route(
+            "/{player_id}/profile/get_by_platform_account_id",
+            post(profile_get),
+        )
         // Build config — versioned path the game actually calls
         .route("/PC/Production/{version}/{file}", get(build_config))
         .route("/singlesignon/1", post(sso_logon))
@@ -673,13 +697,22 @@ fn build_router() -> Router {
         .route("/apps/1/find", post(apps_find))
         .route("/sessions/1/create", post(session_create))
         .route("/sessions/1/heartbeat", post(heartbeat))
-        .route("/entitlements/1/appOwnership/{group}", get(app_ownership).post(app_ownership))
-        .route("/entitlements/1/checkAppOwnership/{group}", get(app_ownership).post(app_ownership))
+        .route(
+            "/entitlements/1/appOwnership/{group}",
+            get(app_ownership).post(app_ownership),
+        )
+        .route(
+            "/entitlements/1/checkAppOwnership/{group}",
+            get(app_ownership).post(app_ownership),
+        )
         .route(
             "/entitlements/1/firstPartyMapping/{platform}/{platform_id}",
             get(entitlements_all).post(entitlements_all),
         )
-        .route("/entitlements/1/mapping/{group}", get(entitlements_all).post(entitlements_all))
+        .route(
+            "/entitlements/1/mapping/{group}",
+            get(entitlements_all).post(entitlements_all),
+        )
         .route("/entitlements/1/grants/find", post(grants_find))
         .route("/status", get(server_status))
         .route("/build_config", get(build_config))
@@ -752,7 +785,9 @@ async fn doorman_config() -> Json<Value> {
 // playerId (like the Steam ID URL param), kando's session state won't match the
 // DLL's hardcoded entitlement data and my2K fails. Extract the UUID from the body.
 fn extract_2k_uuid(body: &[u8], field_name: &[u8]) -> Option<String> {
-    let pos = body.windows(field_name.len()).position(|w| w == field_name)?;
+    let pos = body
+        .windows(field_name.len())
+        .position(|w| w == field_name)?;
     let is_hex = |c: u8| matches!(c, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F');
     // Search the 128 bytes before the field name for a 32-char hex UUID.
     // Scan from the end (closest to the field name) to avoid matching an earlier
@@ -760,11 +795,11 @@ fn extract_2k_uuid(body: &[u8], field_name: &[u8]) -> Option<String> {
     let lo = pos.saturating_sub(128);
     let region = &body[lo..pos];
     for i in (0..region.len()).rev() {
-        if i + 32 <= region.len() && region[i..i+32].iter().all(|&c| is_hex(c)) {
+        if i + 32 <= region.len() && region[i..i + 32].iter().all(|&c| is_hex(c)) {
             let before_ok = i == 0 || !is_hex(region[i - 1]);
             let after_ok = i + 32 == region.len() || !is_hex(region[i + 32]);
             if before_ok && after_ok {
-                return String::from_utf8(region[i..i+32].to_vec()).ok();
+                return String::from_utf8(region[i..i + 32].to_vec()).ok();
             }
         }
     }
@@ -772,8 +807,7 @@ fn extract_2k_uuid(body: &[u8], field_name: &[u8]) -> Option<String> {
 }
 
 async fn two_k_auth(Path(steam_id): Path<String>, body: axum::body::Bytes) -> Json<Value> {
-    let two_k_id = extract_2k_uuid(&body, b"2k_player_id")
-        .unwrap_or_else(|| steam_id.clone());
+    let two_k_id = extract_2k_uuid(&body, b"2k_player_id").unwrap_or_else(|| steam_id.clone());
     kando_ok(json!({
         "accessToken": Uuid::new_v4().to_string(),
         "expiresIn": 86400,

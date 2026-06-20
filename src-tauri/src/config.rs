@@ -156,7 +156,10 @@ mod tests {
         let back: Config = serde_json::from_str(&json).unwrap();
         assert_eq!(back.server_url, "http://example.com:8080");
         assert_eq!(back.active_version().install_dir, "/home/user/Games/Evolve");
-        assert_eq!(back.active_version().selected_tier, Some("recommended".to_string()));
+        assert_eq!(
+            back.active_version().selected_tier,
+            Some("recommended".to_string())
+        );
     }
 
     #[test]

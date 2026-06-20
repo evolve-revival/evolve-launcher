@@ -224,7 +224,8 @@ pub async fn start_install(
 
         let cfg_now = Config::load(&app_clone);
         let server_url = cfg_now.server_url.clone();
-        let selected_files = manifest.filter_by_selection(&cfg_now.active_version().selected_components);
+        let selected_files =
+            manifest.filter_by_selection(&cfg_now.active_version().selected_components);
 
         match run_downloads(
             app_clone.clone(),
@@ -330,7 +331,8 @@ pub async fn start_repair(
         ProgressRecord::delete(&dir);
 
         let cfg_now = Config::load(&app_clone);
-        let selected_files = manifest.filter_by_selection(&cfg_now.active_version().selected_components);
+        let selected_files =
+            manifest.filter_by_selection(&cfg_now.active_version().selected_components);
 
         match run_downloads(
             app_clone.clone(),
@@ -414,8 +416,8 @@ pub fn add_to_steam(app: AppHandle, steam_id: String) -> Result<(), String> {
     }
     let root = crate::steam::find_steam_root()
         .ok_or_else(|| "Could not find Steam installation".to_string())?;
-    let launcher_exe = std::env::current_exe()
-        .map_err(|e| format!("Could not resolve launcher path: {e}"))?;
+    let launcher_exe =
+        std::env::current_exe().map_err(|e| format!("Could not resolve launcher path: {e}"))?;
     crate::steam::add_to_steam(&root, &steam_id, &launcher_exe)
 }
 
@@ -432,16 +434,22 @@ pub struct DonorStatus {
 #[tauri::command]
 pub fn check_donor_game(app: AppHandle) -> DonorStatus {
     let cfg = Config::load(&app);
-    let donor_name = format!("{} (App ID {})", crate::donor::DONOR_NAME, crate::donor::DONOR_APP_ID);
+    let donor_name = format!(
+        "{} (App ID {})",
+        crate::donor::DONOR_NAME,
+        crate::donor::DONOR_APP_ID
+    );
 
     let steam_root = match crate::steam::find_steam_root() {
         Some(r) => r,
-        None => return DonorStatus {
-            installed: false,
-            dll_ready: false,
-            donor_name,
-            donor_app_id: crate::donor::DONOR_APP_ID,
-        },
+        None => {
+            return DonorStatus {
+                installed: false,
+                dll_ready: false,
+                donor_name,
+                donor_app_id: crate::donor::DONOR_APP_ID,
+            }
+        }
     };
 
     let donor_dir = crate::steam::find_donor_game_dir(&steam_root, crate::donor::DONOR_APP_ID);
@@ -480,29 +488,32 @@ pub struct VersionInfo {
 #[tauri::command]
 pub fn get_versions(app: AppHandle) -> Vec<VersionInfo> {
     let cfg = Config::load(&app);
-    cfg.versions.iter().map(|v| {
-        let (state, installed_build) = if v.install_dir.is_empty() {
-            ("not-installed".to_string(), None)
-        } else {
-            let dir = PathBuf::from(&v.install_dir);
-            if dir.join("progress.json").exists() {
-                ("paused".to_string(), None)
+    cfg.versions
+        .iter()
+        .map(|v| {
+            let (state, installed_build) = if v.install_dir.is_empty() {
+                ("not-installed".to_string(), None)
             } else {
-                match crate::install::InstallRecord::load(&dir) {
-                    Some(r) => ("ready".to_string(), Some(r.build)),
-                    None => ("not-installed".to_string(), None),
+                let dir = PathBuf::from(&v.install_dir);
+                if dir.join("progress.json").exists() {
+                    ("paused".to_string(), None)
+                } else {
+                    match crate::install::InstallRecord::load(&dir) {
+                        Some(r) => ("ready".to_string(), Some(r.build)),
+                        None => ("not-installed".to_string(), None),
+                    }
                 }
+            };
+            VersionInfo {
+                is_active: v.id == cfg.active_version_id,
+                id: v.id.clone(),
+                name: v.name.clone(),
+                install_dir: v.install_dir.clone(),
+                state,
+                installed_build,
             }
-        };
-        VersionInfo {
-            is_active: v.id == cfg.active_version_id,
-            id: v.id.clone(),
-            name: v.name.clone(),
-            install_dir: v.install_dir.clone(),
-            state,
-            installed_build,
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -520,7 +531,9 @@ pub fn switch_version(app: AppHandle, id: String) -> Result<InstallStatus, Strin
 pub fn open_steam_store(app_id: u32) {
     let url = format!("steam://store/{app_id}");
     #[cfg(target_os = "windows")]
-    let _ = std::process::Command::new("cmd").args(["/c", "start", "", &url]).spawn();
+    let _ = std::process::Command::new("cmd")
+        .args(["/c", "start", "", &url])
+        .spawn();
     #[cfg(not(target_os = "windows"))]
     let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
 }
@@ -528,7 +541,10 @@ pub fn open_steam_store(app_id: u32) {
 // ── Launch ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn launch_game(app: AppHandle, server_state: tauri::State<'_, crate::LocalServerState>) -> Result<(), String> {
+pub async fn launch_game(
+    app: AppHandle,
+    server_state: tauri::State<'_, crate::LocalServerState>,
+) -> Result<(), String> {
     let _ = std::fs::write("/tmp/evolve_launch.log", "launch_game: started\n");
     let cfg = Config::load(&app);
     let game_install_dir = cfg.active_version().install_dir.clone();
@@ -538,7 +554,10 @@ pub async fn launch_game(app: AppHandle, server_state: tauri::State<'_, crate::L
 
     let bin_dir = PathBuf::from(&game_install_dir).join("bin64_SteamRetail");
     let exe = bin_dir.join("Evolve.exe");
-    let _ = std::fs::write("/tmp/evolve_launch.log", format!("step1: install_dir={game_install_dir}, exe={exe:?}\n"));
+    let _ = std::fs::write(
+        "/tmp/evolve_launch.log",
+        format!("step1: install_dir={game_install_dir}, exe={exe:?}\n"),
+    );
 
     // Pre-flight 1: ensure steam_api64_real.dll is present (copy if missing)
     let real_dll = bin_dir.join(crate::donor::REAL_STEAM_API_DLL);
@@ -546,12 +565,14 @@ pub async fn launch_game(app: AppHandle, server_state: tauri::State<'_, crate::L
         let steam_root = crate::steam::find_steam_root()
             .ok_or_else(|| "Steam not found — install Steam to play".to_string())?;
         let donor_dir = crate::steam::find_donor_game_dir(&steam_root, crate::donor::DONOR_APP_ID)
-            .ok_or_else(|| format!(
-                "{} (App ID {}) is not installed — install it via steam://run/{}",
-                crate::donor::DONOR_NAME,
-                crate::donor::DONOR_APP_ID,
-                crate::donor::DONOR_APP_ID,
-            ))?;
+            .ok_or_else(|| {
+                format!(
+                    "{} (App ID {}) is not installed — install it via steam://run/{}",
+                    crate::donor::DONOR_NAME,
+                    crate::donor::DONOR_APP_ID,
+                    crate::donor::DONOR_APP_ID,
+                )
+            })?;
         crate::steam::copy_steam_api_dll(&donor_dir, &bin_dir)?;
     }
 
@@ -574,10 +595,42 @@ pub async fn launch_game(app: AppHandle, server_state: tauri::State<'_, crate::L
     // unprivileged. The rule is idempotent (-C checks before -A adds).
     #[cfg(target_os = "linux")]
     {
-        let rule = ["-t", "nat", "-A", "OUTPUT", "-o", "lo", "-p", "tcp",
-                    "--dport", "443", "-d", "127.0.0.1", "-j", "REDIRECT", "--to-port", "4430"];
-        let check = ["-t", "nat", "-C", "OUTPUT", "-o", "lo", "-p", "tcp",
-                     "--dport", "443", "-d", "127.0.0.1", "-j", "REDIRECT", "--to-port", "4430"];
+        let rule = [
+            "-t",
+            "nat",
+            "-A",
+            "OUTPUT",
+            "-o",
+            "lo",
+            "-p",
+            "tcp",
+            "--dport",
+            "443",
+            "-d",
+            "127.0.0.1",
+            "-j",
+            "REDIRECT",
+            "--to-port",
+            "4430",
+        ];
+        let check = [
+            "-t",
+            "nat",
+            "-C",
+            "OUTPUT",
+            "-o",
+            "lo",
+            "-p",
+            "tcp",
+            "--dport",
+            "443",
+            "-d",
+            "127.0.0.1",
+            "-j",
+            "REDIRECT",
+            "--to-port",
+            "4430",
+        ];
         let already = std::process::Command::new("sudo")
             .arg("iptables")
             .args(check)
@@ -592,11 +645,10 @@ pub async fn launch_game(app: AppHandle, server_state: tauri::State<'_, crate::L
                 .map(|s| s.success())
                 .unwrap_or(false);
             if !ok {
-                return Err(
-                    "Could not set up port redirect (iptables 443→4430). \
+                return Err("Could not set up port redirect (iptables 443→4430). \
                      Run once manually: sudo iptables -t nat -A OUTPUT -o lo -p tcp \
-                     --dport 443 -d 127.0.0.1 -j REDIRECT --to-port 4430".to_string()
-                );
+                     --dport 443 -d 127.0.0.1 -j REDIRECT --to-port 4430"
+                    .to_string());
             }
         }
         let _ = std::fs::write("/tmp/evolve_launch.log", "step2b: iptables redirect ok\n");
@@ -629,7 +681,10 @@ pub async fn launch_game(app: AppHandle, server_state: tauri::State<'_, crate::L
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
-        let _ = std::fs::write("/tmp/evolve_launch.log", format!("step3: steam_running={steam_running}\n"));
+        let _ = std::fs::write(
+            "/tmp/evolve_launch.log",
+            format!("step3: steam_running={steam_running}\n"),
+        );
         if !steam_running {
             return Err("Steam is not running — please start Steam and log in first".to_string());
         }
@@ -655,7 +710,10 @@ pub async fn launch_game(app: AppHandle, server_state: tauri::State<'_, crate::L
         })?;
         let compat_prefix = PathBuf::from(&game_install_dir).join("proton_prefix");
         std::fs::create_dir_all(&compat_prefix).map_err(|e| e.to_string())?;
-        let cwd = exe.parent().unwrap_or_else(|| std::path::Path::new(".")).to_path_buf();
+        let cwd = exe
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
 
         // Start server only if not already running (it lives for the app's lifetime)
         let server_already_running = {
@@ -663,14 +721,28 @@ pub async fn launch_game(app: AppHandle, server_state: tauri::State<'_, crate::L
             guard.is_some()
         };
         if !server_already_running {
-            let _ = std::fs::write("/tmp/evolve_launch.log", format!("step4: starting local server, game_root={game_install_dir}\n"));
-            let server = crate::local_server::start(std::path::Path::new(&game_install_dir)).await
-                .map_err(|e| { let _ = std::fs::write("/tmp/evolve_launch.log", format!("step4 FAILED: {e}\n")); e })?;
-            let _ = std::fs::write("/tmp/evolve_launch.log", "step5: server ok, spawning proton\n");
+            let _ = std::fs::write(
+                "/tmp/evolve_launch.log",
+                format!("step4: starting local server, game_root={game_install_dir}\n"),
+            );
+            let server = crate::local_server::start(std::path::Path::new(&game_install_dir))
+                .await
+                .map_err(|e| {
+                    let _ =
+                        std::fs::write("/tmp/evolve_launch.log", format!("step4 FAILED: {e}\n"));
+                    e
+                })?;
+            let _ = std::fs::write(
+                "/tmp/evolve_launch.log",
+                "step5: server ok, spawning proton\n",
+            );
             let mut guard = server_state.0.lock().unwrap();
             *guard = Some(server);
         } else {
-            let _ = std::fs::write("/tmp/evolve_launch.log", "step4+5: server already running\n");
+            let _ = std::fs::write(
+                "/tmp/evolve_launch.log",
+                "step4+5: server already running\n",
+            );
         }
 
         let mut child = tokio::process::Command::new(&proton)

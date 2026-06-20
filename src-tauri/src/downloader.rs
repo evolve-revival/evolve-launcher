@@ -124,7 +124,9 @@ pub async fn download_file(
             .await
             .map_err(|e| format!("Write error: {}", e))?;
     }
-    file.flush().await.map_err(|e| format!("Flush error: {}", e))?;
+    file.flush()
+        .await
+        .map_err(|e| format!("Flush error: {}", e))?;
     drop(file);
 
     let actual = hex::encode(hasher.finalize());
@@ -170,7 +172,10 @@ pub async fn download_with_retry(
             }
         }
     }
-    Err(format!("Failed after {} retries: {}", MAX_RETRIES, last_err))
+    Err(format!(
+        "Failed after {} retries: {}",
+        MAX_RETRIES, last_err
+    ))
 }
 
 // ── Parallel download orchestration ──────────────────────────────────────

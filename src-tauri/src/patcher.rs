@@ -3,8 +3,8 @@ use crate::downloader::download_with_retry;
 use crate::install::Manifest;
 use reqwest::Client;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 /// Parse the hostname from a URL like "https://host:port/path" → "host"
 pub fn extract_host(url: &str) -> String {
@@ -32,7 +32,11 @@ pub fn extract_port(url: &str) -> u16 {
             return p;
         }
     }
-    if url.starts_with("https://") { 443 } else { 80 }
+    if url.starts_with("https://") {
+        443
+    } else {
+        80
+    }
 }
 
 /// Generate EvolveLogging.ini content pointing at the revival server,
@@ -71,11 +75,17 @@ pub async fn apply_patches(
     for patch in &manifest.patches {
         // Guard against path traversal attacks via a compromised manifest
         if std::path::Path::new(&patch.path).is_absolute() {
-            return Err(format!("Manifest contains absolute patch path: {}", patch.path));
+            return Err(format!(
+                "Manifest contains absolute patch path: {}",
+                patch.path
+            ));
         }
         let dest = install_dir.join(&patch.path);
         if !dest.starts_with(install_dir) {
-            return Err(format!("Manifest patch path escapes install dir: {}", patch.path));
+            return Err(format!(
+                "Manifest patch path escapes install dir: {}",
+                patch.path
+            ));
         }
         let url = format!("{}{}", manifest.base_url, patch.path);
         download_with_retry(client, &url, &dest, &patch.sha256, cancelled.clone()).await?;
@@ -84,8 +94,11 @@ pub async fn apply_patches(
     let bin_dir = install_dir.join("bin64_SteamRetail");
     std::fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
 
-    std::fs::write(bin_dir.join("EvolveLogging.ini"), generate_logging_ini(server_url))
-        .map_err(|e| format!("Failed to write EvolveLogging.ini: {e}"))?;
+    std::fs::write(
+        bin_dir.join("EvolveLogging.ini"),
+        generate_logging_ini(server_url),
+    )
+    .map_err(|e| format!("Failed to write EvolveLogging.ini: {e}"))?;
 
     std::fs::write(bin_dir.join("steam_appid.txt"), steam_appid_content())
         .map_err(|e| format!("Failed to write steam_appid.txt: {e}"))
@@ -97,7 +110,10 @@ mod tests {
 
     #[test]
     fn extracts_host_from_https_url() {
-        assert_eq!(extract_host("https://revival.example.com:8080"), "revival.example.com");
+        assert_eq!(
+            extract_host("https://revival.example.com:8080"),
+            "revival.example.com"
+        );
     }
 
     #[test]
@@ -107,7 +123,10 @@ mod tests {
 
     #[test]
     fn extracts_host_with_no_port() {
-        assert_eq!(extract_host("https://cdn.evolve-revival.com"), "cdn.evolve-revival.com");
+        assert_eq!(
+            extract_host("https://cdn.evolve-revival.com"),
+            "cdn.evolve-revival.com"
+        );
     }
 
     #[test]
@@ -143,9 +162,15 @@ mod tests {
 
     #[test]
     fn extracts_host_for_broadcasts_file() {
-        assert_eq!(extract_host("https://revival.example.com:8443/"), "revival.example.com");
+        assert_eq!(
+            extract_host("https://revival.example.com:8443/"),
+            "revival.example.com"
+        );
         assert_eq!(extract_host("http://192.168.1.50:8080"), "192.168.1.50");
-        assert_eq!(extract_host("https://play.evolve-revival.com"), "play.evolve-revival.com");
+        assert_eq!(
+            extract_host("https://play.evolve-revival.com"),
+            "play.evolve-revival.com"
+        );
     }
 
     #[test]

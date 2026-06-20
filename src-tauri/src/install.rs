@@ -112,7 +112,10 @@ impl Manifest {
 
 /// Merge `config` key=value pairs into `<install_dir>/system.cfg`.
 /// Existing lines for a key are replaced; missing keys are appended.
-pub fn apply_perf_config(install_dir: &Path, config: &HashMap<String, String>) -> Result<(), String> {
+pub fn apply_perf_config(
+    install_dir: &Path,
+    config: &HashMap<String, String>,
+) -> Result<(), String> {
     if config.is_empty() {
         return Ok(());
     }
@@ -216,7 +219,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let mut progress = ProgressRecord::default();
         assert!(!progress.is_complete("Game/UI_Assets.pak"));
-        progress.mark_complete("Game/UI_Assets.pak", dir.path()).unwrap();
+        progress
+            .mark_complete("Game/UI_Assets.pak", dir.path())
+            .unwrap();
         assert!(progress.is_complete("Game/UI_Assets.pak"));
         assert!(!progress.is_complete("Engine/Engine.pak"));
 

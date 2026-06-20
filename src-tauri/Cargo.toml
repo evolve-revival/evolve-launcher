@@ -36,3 +36,6 @@ strip = "debuginfo"
 [profile.release]
 opt-level = "s"
 strip = true
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
