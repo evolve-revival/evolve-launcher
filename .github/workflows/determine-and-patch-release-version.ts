@@ -1,8 +1,7 @@
 #!/usr/bin/env zx
 
 import { $ } from "zx";
-import { writeFile } from "node:fs/promises";
-import { readFile } from "node:fs/promises";
+import { writeFile, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { coerce } from "semver";
 import { env } from "process";
@@ -36,6 +35,9 @@ const tauriConfFilePath = join(
     "src-tauri",
     "tauri.conf.json",
 );
+if (!await stat(tauriConfFilePath).then(e => e.isFile())) {
+    throw new Error("expected Tauri Config file at " + tauriConfFilePath)
+}
 
 const builtAt = new Date().toISOString();
 let channel: "dev" | "beta" | "stable";
