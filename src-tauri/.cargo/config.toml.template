@@ -1,3 +1,6 @@
+# Copy this file and rename it to `config.toml`.
+# The file will be gitignored.
+
 [build]
 # Keep Rust artifacts out of the project directory entirely.
 # The evolve-launcher Tauri build otherwise fills src-tauri/target/ with ~5-13 GB

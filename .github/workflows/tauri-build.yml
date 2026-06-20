@@ -1,0 +1,110 @@
+# This pipeline definition is stolen from https://github.com/tauri-apps/tauri-action/blob/dev/examples/publish-to-auto-release.yml and adjusted to our needs.
+#
+
+name: "Build and release Evolve Launcher"
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+concurrency:
+  group: tauri-build
+  cancel-in-progress: true
+
+jobs:
+  build-evolve-launcher:
+    name: Build Launcher for ${{ matrix.buildSuffix }}
+    permissions:
+      contents: write
+      id-token: write # required for attestations
+      attestations: write # required for attestations
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "ubuntu-22.04"
+            args: ""
+            buildSuffix: "linux"
+          - platform: "windows-latest"
+            args: ""
+            buildSuffix: "windows"
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: "true"
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Those targets are only used on macos runners so it's in an `if` to slightly speed up windows and linux builds.
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: install dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: install frontend dependencies
+        run: pnpm ci
+      - name: Patch Launcher Build Version
+        # Note: this determines which version we should use
+        # and writes the result into files .GITHUB_TAG_NAME and .GITHUB_TAG_PRERELEASE
+        # The step below then writes the result to GITHUB_OUTPUT, which is then used for `if` conditions
+        # in the subsequent steps to determine if we need a release.
+        run: npx zx ./scripts/determine-and-patch-release-version.ts
+      - name: Read GitHub release metadata
+        id: release_meta
+        shell: bash
+        run: |
+          TAG_NAME="$(cat .GITHUB_TAG_NAME 2>/dev/null || true)"
+          PRERELEASE="$(cat .GITHUB_TAG_PRERELEASE 2>/dev/null || true)"
+
+          if [[ -z "$TAG_NAME" ]]; then
+            echo "tag_name=false" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+            echo "prerelease=${PRERELEASE:-false}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build and release Evolve Launcher
+        uses: tauri-apps/tauri-action@v0
+        if: ${{ steps.release_meta.outputs.tag_name != 'false' }}
+        env:
+          # This MUST be a PAT instead of the Job Token because GitHub will
+          # not allow events triggered by a Job Token to prevent recursion.
+          #
+          GITHUB_TOKEN: ${{ secrets.PAT_RELEASER_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          args: ${{ matrix.args }}
+          includeUpdaterJson: true
+          releaseBody: "See the assets to download this version and install"
+          releaseDraft: true
+          tagName: ${{ steps.release_meta.outputs.tag_name }}
+          releaseName: ${{ steps.release_meta.outputs.tag_name }}
+          prerelease: ${{ steps.release_meta.outputs.prerelease }}
+      - name: Build Evolve Launcher (no release)
+        uses: tauri-apps/tauri-action@v0
+        if: ${{ steps.release_meta.outputs.tag_name == 'false' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_RELEASER_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          args: ${{ matrix.args }}
+          includeUpdaterJson: true
+          releaseBody: "See the assets to download this version and install"
+          releaseDraft: false
