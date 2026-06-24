@@ -13,10 +13,11 @@ test-game:
 	@bash scripts/test-game.sh
 
 run: cap
-	PORT=443 CERT_FILE=certs/server.crt KEY_FILE=certs/server.key ./bin/evolve-server
+	PORT=443 CERT_FILE=certs/server.crt KEY_FILE=certs/server.key /tmp/evolve-server-bin
 
 cap: build
-	sudo setcap cap_net_bind_service=+ep ./bin/evolve-server
+	cp ./bin/evolve-server /tmp/evolve-server-bin
+	sudo setcap cap_net_bind_service=+ep /tmp/evolve-server-bin
 
 cert:
 	mkdir -p certs

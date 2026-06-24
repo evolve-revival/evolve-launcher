@@ -36,7 +36,7 @@ SERVER_PID=$!
 
 echo "==> Waiting for server health (up to 10s)..."
 for i in $(seq 1 10); do
-    if curl -sk --max-time 1 --cacert certs/ca.crt https://127.0.0.1/status 2>/dev/null | grep -q '"ok"'; then
+    if curl -s --max-time 1 --cacert certs/ca.crt https://127.0.0.1/status 2>/dev/null | grep -q '"ok"'; then
         echo "    server ready (${i}s)"
         break
     fi
