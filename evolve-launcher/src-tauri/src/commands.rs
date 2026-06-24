@@ -599,15 +599,69 @@ pub async fn launch_game(app: AppHandle, server_state: tauri::State<'_, crate::L
                 );
             }
         }
+
+        // Diagnostic LOG rule: log every new TCP connection to 127.0.0.1:443
+        // so we can see in `sudo journalctl -k | grep EVOLVE_443` whether kando
+        // attempts service connections at the TCP level (independent of TLS).
+        // Non-fatal: if the kernel lacks the LOG target, just skip.
+        let log_check = ["-t", "nat", "-C", "OUTPUT", "-o", "lo", "-p", "tcp",
+                         "--dport", "443", "-d", "127.0.0.1",
+                         "-m", "state", "--state", "NEW", "-j", "LOG",
+                         "--log-prefix", "EVOLVE_443 "];
+        let log_already = std::process::Command::new("sudo")
+            .arg("iptables")
+            .args(log_check)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !log_already {
+            let log_rule = ["-t", "nat", "-I", "OUTPUT", "1", "-o", "lo", "-p", "tcp",
+                            "--dport", "443", "-d", "127.0.0.1",
+                            "-m", "state", "--state", "NEW", "-j", "LOG",
+                            "--log-prefix", "EVOLVE_443 "];
+            let _ = std::process::Command::new("sudo")
+                .arg("iptables")
+                .args(log_rule)
+                .status();
+        }
+
         let _ = std::fs::write("/tmp/evolve_launch.log", "step2b: iptables redirect ok\n");
     }
 
-    // Pre-flight 3: rewrite EvolveLogging.ini — always use 127.0.0.1 so pinenut's
-    // GetAddrInfoW hook redirects *.my.2k.com to our local server, not the configured
-    // external server_url (which may resolve to a remote IP, breaking cURL connections).
+    // Pre-flight 3: rewrite EvolveLogging.ini so kando's cuRL connects to 127.0.0.1.
     let ini = crate::patcher::generate_logging_ini("https://127.0.0.1:443");
     std::fs::write(bin_dir.join("EvolveLogging.ini"), ini)
         .map_err(|e| format!("Failed to write EvolveLogging.ini: {e}"))?;
+
+    // Pre-flight 3b: write 2K API domains into the Wine Windows hosts file so that
+    // kando's libcurl (which uses Wine's WinSock resolver, not Linux /etc/hosts) can
+    // resolve them all to 127.0.0.1.  Without this, only doorman.my.2k.com is
+    // intercepted by evolve_shim.dll's GetAddrInfoW hook; all other service hostnames
+    // (sso, entitlements, storage, stats, …) fail DNS inside Wine and kando silently
+    // falls back to local-only auth — no profile, no entitlements, no online features.
+    #[cfg(target_os = "linux")]
+    {
+        let compat_prefix = PathBuf::from(&game_install_dir).join("proton_prefix");
+        let wine_hosts = compat_prefix
+            .join("pfx/drive_c/windows/system32/drivers/etc/hosts");
+        if let Some(parent) = wine_hosts.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let hosts_content = "\
+# 127.0.0.1 localhost\n\
+# Evolve revival - redirect 2K API domains to local server\n\
+127.0.0.1 doorman.my.2k.com\n\
+127.0.0.1 api.my.2k.com\n\
+127.0.0.1 sso.my.2k.com\n\
+127.0.0.1 entitlements.my.2k.com\n\
+127.0.0.1 storage.my.2k.com\n\
+127.0.0.1 peers.my.2k.com\n\
+127.0.0.1 telemetry.my.2k.com\n\
+127.0.0.1 stats.my.2k.com\n\
+127.0.0.1 grants.my.2k.com\n";
+        let _ = std::fs::write(&wine_hosts, hosts_content);
+        let _ = std::fs::write("/tmp/evolve_launch.log", "step3b: wine hosts written\n");
+    }
 
     // Pre-flight 3: ensure Steam is running (required for real Steamworks)
     #[cfg(target_os = "windows")]
@@ -673,12 +727,79 @@ pub async fn launch_game(app: AppHandle, server_state: tauri::State<'_, crate::L
             let _ = std::fs::write("/tmp/evolve_launch.log", "step4+5: server already running\n");
         }
 
+        // Add our CA cert to Wine's trusted root store so kando's WinHttp (which
+        // uses SChannel/Wine's GnuTLS) will trust our TLS certificate for service
+        // calls (SSO, auth, entitlements, etc.).  Doorman already works because
+        // BINTRUST.dll disables cert-checking on the direct-IP doorman handle;
+        // service-call handles connect to hostnames (sso.my.2k.com …) whose cert
+        // is checked normally, so our CA must be trusted.
+        // Non-fatal: if certutil fails we still launch; the iptables LOG rule will
+        // confirm whether TLS is the only remaining blocker.
+        {
+            let ca_pem_path = PathBuf::from(&game_install_dir)
+                .join("bin64_SteamRetail")
+                .join("revival-ca.pem");
+            // certutil.exe sits inside the Wine prefix; pass its Linux path to
+            // `proton run` so Proton/Wine runs it against the same prefix.
+            let certutil_exe = compat_prefix
+                .join("pfx/drive_c/windows/system32/certutil.exe");
+            if ca_pem_path.exists() && certutil_exe.exists() {
+                // Wine maps Linux root to Z:, so the Linux absolute path becomes
+                // Z:\path\to\file inside Wine.
+                let wine_ca_path = format!(
+                    "Z:{}",
+                    ca_pem_path.to_string_lossy().replace('/', "\\")
+                );
+                let result = std::process::Command::new(&proton)
+                    .arg("run")
+                    .arg(&certutil_exe)
+                    .arg("-addstore")
+                    .arg("-f")
+                    .arg("Root")
+                    .arg(&wine_ca_path)
+                    .env("STEAM_COMPAT_DATA_PATH", &compat_prefix)
+                    .env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &steam_root)
+                    .env("SteamAppId", crate::donor::DONOR_APP_ID.to_string())
+                    .current_dir(&cwd)
+                    .output();
+                let msg = match &result {
+                    Ok(o) => format!("exit={}, stdout={}", o.status,
+                        String::from_utf8_lossy(&o.stdout).chars().take(200).collect::<String>()),
+                    Err(e) => format!("error={e}"),
+                };
+                let _ = std::fs::write("/tmp/evolve_launch.log",
+                    format!("step5b: certutil add CA: {msg}\n"));
+            } else {
+                let _ = std::fs::write("/tmp/evolve_launch.log",
+                    format!("step5b: skip certutil (ca_pem={}, certutil={})\n",
+                        ca_pem_path.exists(), certutil_exe.exists()));
+            }
+        }
+
+        // Build the ca-bundle path we'll pass to Wine via SSL_CERT_FILE.
+        // Wine's WinHttp stack is: WinHttp → Schannel → GnuTLS, and GnuTLS
+        // reads SSL_CERT_FILE for its trust anchors.  Setting this to our
+        // revival-ca.pem makes kando's service-call TLS verification pass
+        // without needing certutil to write into the Windows cert store.
+        let ssl_cert_file = PathBuf::from(&game_install_dir)
+            .join("bin64_SteamRetail")
+            .join("revival-ca.pem");
+        let _ = std::fs::OpenOptions::new().append(true)
+            .open("/tmp/evolve_launch.log")
+            .and_then(|mut f| {
+                use std::io::Write;
+                writeln!(f, "step5c: SSL_CERT_FILE={} exists={}",
+                    ssl_cert_file.display(), ssl_cert_file.exists())
+            });
+
         let mut child = tokio::process::Command::new(&proton)
             .arg("run")
             .arg(&exe)
             .env("STEAM_COMPAT_DATA_PATH", &compat_prefix)
             .env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &steam_root)
             .env("SteamAppId", crate::donor::DONOR_APP_ID.to_string())
+            // Make Wine's GnuTLS trust our revival CA for service-call TLS.
+            .env("SSL_CERT_FILE", &ssl_cert_file)
             .current_dir(&cwd)
             .spawn()
             .map_err(|e| format!("Failed to launch via Proton ({proton:?}): {e}"))?;

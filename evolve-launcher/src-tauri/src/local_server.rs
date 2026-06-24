@@ -2,10 +2,10 @@ use axum::{
     Router,
     body::Body,
     extract::Path,
-    http::Request,
+    http::{Request, StatusCode},
     middleware::Next,
     response::Response,
-    routing::{get, post},
+    routing::{get, post, put},
     Json,
 };
 use serde_json::{json, Value};
@@ -507,6 +507,7 @@ fn rsa_key_pem() -> Option<String> {
 fn generate_tls_certs() -> Result<(String, String, String), String> {
     use rcgen::{Certificate, CertificateParams, DnType, IsCa, BasicConstraints, SanType, KeyPair,
                 PKCS_RSA_SHA256, PKCS_ECDSA_P256_SHA256};
+    use std::net::{IpAddr, Ipv4Addr};
 
     // Prefer RSA 2048 so the game's TLS 1.2 libcurl can use ECDHE-RSA cipher suites.
     // Fall back to ECDSA P-256 if openssl is not on PATH (e.g. bare Windows).
@@ -534,11 +535,12 @@ fn generate_tls_certs() -> Result<(String, String, String), String> {
 
     let mut server_params = CertificateParams::default();
     server_params.alg = server_alg;
-    // *.my.2k.com covers api.my.2k.com and other single-level subdomains.
-    // The Pinenut cached doorman config points services at a 4-label subdomain
-    // (508223012e5a5ff19f30a391b2bdadc0.my.2k.com) which wildcards can't cover —
-    // add it explicitly so kando's TLS validation passes for those calls too.
+    // All service calls go to 127.0.0.1 (Proton's Wine resolver doesn't read Linux
+    // /etc/hosts, so hostname-based redirects don't reach us). Include IP SAN so
+    // any libcurl that does verify IP SANs still passes; old libcurl typically skips
+    // hostname checks for bare IPs but the SAN doesn't hurt.
     server_params.subject_alt_names = vec![
+        SanType::IpAddress(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))),
         SanType::DnsName("*.my.2k.com".to_string()),
         SanType::DnsName("508223012e5a5ff19f30a391b2bdadc0.my.2k.com".to_string()),
     ];
@@ -554,7 +556,12 @@ fn generate_tls_certs() -> Result<(String, String, String), String> {
 }
 
 fn patch_ca_bundle(game_root: &std::path::Path, ca_pem: &str) -> Result<(), String> {
-    let bundle_path = game_root.join("ca-bundle.crt");
+    // The game executable runs from bin64_SteamRetail/, so write the cert bundle
+    // there so kando's libcurl can find it via a relative "ca-bundle.crt" path.
+    let bin_dir = game_root.join("bin64_SteamRetail");
+    let bundle_path = bin_dir.join("ca-bundle.crt");
+    let ca_pem_path = bin_dir.join("revival-ca.pem");
+
     let existing = std::fs::read_to_string(&bundle_path).unwrap_or_default();
     // Keep only the first cert (Pinenut's original CA), then append ours
     let first_end = existing.find("-----END CERTIFICATE-----")
@@ -562,7 +569,11 @@ fn patch_ca_bundle(game_root: &std::path::Path, ca_pem: &str) -> Result<(), Stri
         .unwrap_or(0);
     let new_bundle = format!("{}\n{ca_pem}", &existing[..first_end]);
     std::fs::write(&bundle_path, new_bundle)
-        .map_err(|e| format!("Write ca-bundle.crt: {e}"))
+        .map_err(|e| format!("Write ca-bundle.crt: {e}"))?;
+
+    // Also write a standalone PEM so commands.rs can add it to Wine's cert store
+    std::fs::write(&ca_pem_path, ca_pem)
+        .map_err(|e| format!("Write revival-ca.pem: {e}"))
 }
 
 pub async fn start(game_root: &std::path::Path) -> Result<LocalServer, String> {
@@ -626,35 +637,90 @@ fn kando_ok(result: Value) -> Json<Value> {
     }))
 }
 
+const LOG_DIR: &str = "/home/navitank/Desktop/EvolveFilesLegacy";
+
+const PINENUT_GRANTS: &str = include_str!("pinenut_grants.json");
+
+// Format a 32-char hex firstPartyPlayerId as a UUID (8-4-4-4-12).
+// "00000000000000000110000116a75abc" → "00000000-0000-0000-0110-000116a75abc"
+fn player_id_from_fpid(s: &str) -> String {
+    let s = s.trim();
+    if s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        format!("{}-{}-{}-{}-{}", &s[..8], &s[8..12], &s[12..16], &s[16..20], &s[20..])
+    } else {
+        s.to_string()
+    }
+}
+
+// Extract playerId from Authorization: Bearer <token> header.
+fn player_id_from_auth(headers: &axum::http::HeaderMap) -> Option<String> {
+    let val = headers.get("authorization")?.to_str().ok()?;
+    let token = val.strip_prefix("Bearer ").or_else(|| val.strip_prefix("bearer "))?;
+    let token = token.trim();
+    if token.len() == 36 && token.chars().filter(|&c| c == '-').count() == 4 {
+        Some(token.to_string())
+    } else if token.len() == 32 && token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Some(player_id_from_fpid(token))
+    } else {
+        None
+    }
+}
+
+fn fpid_from_body(body: &[u8]) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let fpid = v["params"]["doormanInfo"]["firstPartyPlayerId"].as_str()?;
+    Some(player_id_from_fpid(fpid))
+}
+
+fn kando_ok_with_params(result: Value, params: Value) -> Json<Value> {
+    Json(json!({
+        "result": result,
+        "params": params,
+        "header": {
+            "code": 0,
+            "cache": {
+                "onlineTtl": 86400,
+                "offlineTtl": -1,
+            }
+        }
+    }))
+}
+
 async fn log_request(req: Request<Body>, next: Next) -> Response {
     use std::io::Write;
     let method = req.method().clone();
     let uri = req.uri().clone();
 
-    // Buffer the body so we can log it AND still pass it to the handler
     let (parts, body) = req.into_parts();
     let bytes = axum::body::to_bytes(body, 4 * 1024 * 1024).await.unwrap_or_default();
 
-    // Log all request bodies to diagnose kando protocol
+    // Log method, URI, and all headers (needed to observe Authorization tokens)
+    let headers_str = parts.headers.iter()
+        .map(|(k, v)| format!("  {}: {}", k, v.to_str().unwrap_or("?")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _ = std::fs::OpenOptions::new()
+        .create(true).append(true)
+        .open(format!("{LOG_DIR}/evolve_server.log"))
+        .and_then(|mut f| writeln!(f, ">> {method} {uri}\n{headers_str}"));
+
     if !bytes.is_empty() {
         let _ = std::fs::OpenOptions::new()
             .create(true).append(true)
-            .open("/home/navitank/Desktop/EvolveFilesLegacy/request_body.log")
+            .open(format!("{LOG_DIR}/request_body.log"))
             .and_then(|mut f| {
                 writeln!(f, "=== {} {} ===\n{}\n", method, uri, String::from_utf8_lossy(&bytes))
             });
     }
 
-    // Reconstruct request with buffered body
     let req = Request::from_parts(parts, Body::from(bytes));
     let resp = next.run(req).await;
 
     let _ = std::fs::OpenOptions::new()
         .create(true).append(true)
-        .open("/tmp/evolve_server.log")
-        .and_then(|mut f| {
-            writeln!(f, "{method} {uri} -> {}", resp.status())
-        });
+        .open(format!("{LOG_DIR}/evolve_server.log"))
+        .and_then(|mut f| writeln!(f, "<< {method} {uri} -> {}", resp.status()));
+
     resp
 }
 
@@ -663,9 +729,11 @@ fn build_router() -> Router {
         // Doorman — game uses POST /doorman/1 (not GET /doorman/1/configs/generate)
         .route("/doorman/1", post(doorman_post))
         .route("/doorman/1/configs/generate", get(doorman_config))
-        // Auth — /{steam_id}/auth/two_k and /{steam_id}/profile/...
+        // Auth — both bare and players/1-prefixed paths (baseUri may or may not be prepended)
         .route("/{player_id}/auth/two_k", post(two_k_auth))
+        .route("/players/1/{player_id}/auth/two_k", post(two_k_auth))
         .route("/{player_id}/profile/get_by_platform_account_id", post(profile_get))
+        .route("/players/1/{player_id}/profile/get_by_platform_account_id", post(profile_get))
         // Build config — versioned path the game actually calls
         .route("/PC/Production/{version}/{file}", get(build_config))
         .route("/singlesignon/1", post(sso_logon))
@@ -687,40 +755,51 @@ fn build_router() -> Router {
         .route("/stats/1/configs", get(stats_configs).post(stats_configs))
         .route("/grants/1/find", post(grants_find))
         .route("/queue/waittime", get(queue_waittime).post(queue_waittime))
+        .route("/storage/1/data/{dataset_id}", get(storage_list))
+        .route("/storage/1/data/{dataset_id}/{key}", put(storage_put).delete(storage_delete))
         .fallback(stub_ok)
         .layer(axum::middleware::from_fn(log_request))
 }
 
-async fn doorman_post(_body: axum::body::Bytes) -> Json<Value> {
-    // body is logged by middleware to request_body.log
-    doorman_config().await
+async fn doorman_post(body: axum::body::Bytes) -> Json<Value> {
+    // Derive a stable player UUID from firstPartyPlayerId so the same token
+    // can be re-issued consistently without any server-side state.
+    let player_id = fpid_from_body(&body)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    doorman_config_for_player(&player_id).await
 }
 
 async fn doorman_config() -> Json<Value> {
-    // Doorman is NOT wrapped in kando_ok — kando reads services/clientConfigSettings from top-level
+    let id = Uuid::new_v4().to_string();
+    doorman_config_for_player(&id).await
+}
+
+async fn doorman_config_for_player(player_id: &str) -> Json<Value> {
+    // Doorman is NOT wrapped in kando_ok — kando reads services/clientConfigSettings from top-level.
+    // accessToken = player_id so every subsequent Bearer token re-derives identity statlessly.
     Json(json!({
-        "accessToken": Uuid::new_v4().to_string(),
+        "accessToken": player_id,
         "expiresIn": 86400,
         "refreshToken": Uuid::new_v4().to_string(),
         "refreshExpiresIn": 86400,
         "tokenType": "Bearer",
-        "playerId": null,
+        "playerId": player_id,
         "sessionId": Uuid::new_v4().to_string(),
-        "platformType": 1,
-        "onlineServicePlatform": 1,
+        "platformType": 3,
+        "onlineServicePlatform": 3,
         "services": [
-            {"serviceName": "doorman",      "serviceInstances": [inst("api.my.2k.com", "doorman/1",      &[])]},
-            {"serviceName": "content",      "serviceInstances": [inst("api.my.2k.com", "content/1",      &[])]},
-            {"serviceName": "singlesignon", "serviceInstances": [inst("api.my.2k.com", "sso/1",          &[])]},
-            {"serviceName": "sessions",     "serviceInstances": [inst("api.my.2k.com", "sessions/1",     &[])]},
-            {"serviceName": "apps",         "serviceInstances": [inst("api.my.2k.com", "apps/1",         &[])]},
-            {"serviceName": "entitlements", "serviceInstances": [inst("api.my.2k.com", "entitlements/1", &[])]},
-            {"serviceName": "players",      "serviceInstances": [inst("api.my.2k.com", "players/1",      &[])]},
-            {"serviceName": "storage",      "serviceInstances": [inst("api.my.2k.com", "storage/1",      &[])]},
-            {"serviceName": "storefront",   "serviceInstances": [inst("api.my.2k.com", "storefront/1",   &[])]},
-            {"serviceName": "telemetry",    "serviceInstances": [inst("api.my.2k.com", "telemetry/1",    &[])]},
-            {"serviceName": "stats",        "serviceInstances": [inst("api.my.2k.com", "stats/1",        &[])]},
-            {"serviceName": "news",         "serviceInstances": [inst("api.my.2k.com", "news/1",         &[])]},
+            {"serviceName": "doorman",      "serviceInstances": [inst("doorman.my.2k.com",      "doorman/1",      &[])]},
+            {"serviceName": "content",      "serviceInstances": [inst("api.my.2k.com",           "content/1",      &[])]},
+            {"serviceName": "singlesignon", "serviceInstances": [inst("sso.my.2k.com",           "sso/1",          &[])]},
+            {"serviceName": "sessions",     "serviceInstances": [inst("api.my.2k.com",           "sessions/1",     &[])]},
+            {"serviceName": "apps",         "serviceInstances": [inst("api.my.2k.com",           "apps/1",         &[])]},
+            {"serviceName": "entitlements", "serviceInstances": [inst("entitlements.my.2k.com",  "entitlements/1", &[])]},
+            {"serviceName": "players",      "serviceInstances": [inst("api.my.2k.com",           "players/1",      &[])]},
+            {"serviceName": "storage",      "serviceInstances": [inst("storage.my.2k.com",       "storage/1",      &[])]},
+            {"serviceName": "storefront",   "serviceInstances": [inst("api.my.2k.com",           "storefront/1",   &[])]},
+            {"serviceName": "telemetry",    "serviceInstances": [inst("telemetry.my.2k.com",     "telemetry/1",    &[])]},
+            {"serviceName": "stats",        "serviceInstances": [inst("stats.my.2k.com",         "stats/1",        &[])]},
+            {"serviceName": "news",         "serviceInstances": [inst("api.my.2k.com",           "news/1",         &[])]},
         ],
         "clientConfigSettings": {
             "doormanConnectTimeout": 5000,
@@ -771,27 +850,43 @@ fn extract_2k_uuid(body: &[u8], field_name: &[u8]) -> Option<String> {
     None
 }
 
-async fn two_k_auth(Path(steam_id): Path<String>, body: axum::body::Bytes) -> Json<Value> {
-    let two_k_id = extract_2k_uuid(&body, b"2k_player_id")
+async fn two_k_auth(
+    Path(steam_id): Path<String>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Json<Value> {
+    // Prefer bearer token (= playerId from doorman), then protobuf body scan, then URL param.
+    let player_id = player_id_from_auth(&headers)
+        .or_else(|| extract_2k_uuid(&body, b"2k_player_id"))
         .unwrap_or_else(|| steam_id.clone());
     kando_ok(json!({
-        "accessToken": Uuid::new_v4().to_string(),
-        "expiresIn": 86400,
-        "tokenType": "Bearer",
-        "playerId": two_k_id,
-        "sessionId": Uuid::new_v4().to_string(),
-        "refreshToken": Uuid::new_v4().to_string(),
-        "refreshExpiresIn": 86400,
+        "platformType": 3,
+        "onlineStoreType": 5,
+        "onlineServicePlatform": 3,
+        "accountType": 2,
         "isNewPlayer": false,
         "hasPlayedApp": true,
+        "accessToken": player_id,
+        "expiresIn": 86400,
+        "tokenType": "bearer",
+        "playerId": player_id,
+        "sessionId": Uuid::new_v4().to_string(),
+        "refreshToken": Uuid::new_v4().to_string(),
+        "refreshExpiresIn": 7200,
         "dobNeeded": false,
     }))
 }
 
-async fn profile_get(Path(steam_id): Path<String>, body: axum::body::Bytes) -> Json<Value> {
-    let two_k_id = extract_2k_uuid(&body, b"guid")
+async fn profile_get(
+    Path(steam_id): Path<String>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Json<Value> {
+    let player_id = player_id_from_auth(&headers)
+        .or_else(|| extract_2k_uuid(&body, b"guid"))
         .or_else(|| extract_2k_uuid(&body, b"2k_player_id"))
         .unwrap_or_else(|| steam_id.clone());
+    let two_k_id = player_id;
     kando_ok(json!({
         "player": {
             "publicId": two_k_id.clone(),
@@ -803,17 +898,23 @@ async fn profile_get(Path(steam_id): Path<String>, body: axum::body::Bytes) -> J
     }))
 }
 
-async fn sso_logon() -> Json<Value> {
+async fn sso_logon(headers: axum::http::HeaderMap) -> Json<Value> {
+    let player_id = player_id_from_auth(&headers)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     kando_ok(json!({
+        "platformType": 3,
+        "onlineStoreType": 5,
+        "onlineServicePlatform": 3,
+        "accountType": 2,
         "isNewPlayer": false,
         "hasPlayedApp": true,
-        "accessToken": Uuid::new_v4().to_string(),
+        "accessToken": player_id,
         "expiresIn": 86400,
-        "tokenType": "Bearer",
-        "playerId": Uuid::new_v4().to_string(),
+        "tokenType": "bearer",
+        "playerId": player_id,
         "sessionId": Uuid::new_v4().to_string(),
         "refreshToken": Uuid::new_v4().to_string(),
-        "refreshExpiresIn": 86400,
+        "refreshExpiresIn": 7200,
         "dobNeeded": false,
     }))
 }
@@ -822,30 +923,12 @@ async fn app_ownership(Path(_group): Path<String>) -> Json<Value> {
     kando_ok(json!({"ownsApp": true}))
 }
 
-async fn entitlements_all() -> Json<Value> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
-    let player_id = Uuid::new_v4().to_string();
-    let items: Vec<Value> = ENTITLEMENT_IDS
-        .iter()
-        .map(|id| {
-            json!({
-                "createdOn": now,
-                "entitlementDefId": id,
-                "isServerAuthoritative": true,
-                "isValid": true,
-                "ruleData": {"grant": true},
-                "entitlementId": Uuid::new_v4().to_string(),
-                "appGroupId": APP_GROUP_ID,
-                "playerPublicId": player_id,
-                "isAvailable": true,
-                "isShared": false,
-            })
-        })
-        .collect();
-    kando_ok(json!({"entitlements": items}))
+async fn entitlements_all(headers: axum::http::HeaderMap) -> Json<Value> {
+    let player_id = player_id_from_auth(&headers)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let grants_json = PINENUT_GRANTS.replace("__PLAYER_ID__", &player_id);
+    let items: Value = serde_json::from_str(&grants_json).unwrap_or(json!([]));
+    kando_ok_with_params(items, json!({"count": 468, "hasMore": false}))
 }
 
 async fn server_status() -> Json<Value> {
@@ -861,11 +944,89 @@ async fn heartbeat() -> Json<Value> {
 }
 
 async fn stats_configs() -> Json<Value> {
-    kando_ok(json!({"statGroups": []}))
+    kando_ok(json!([
+        {
+            "configDefId": "c4a1d8c83a006df8c5daf92e289d93ee",
+            "name": "0 Evolve Retail - Business",
+            "type": "business",
+            "properties": {
+                "maxBufferBytes": 10240,
+                "flushAtQueueMemSizeBytes": 0,
+                "flushAtQueueSize": 500,
+                "flushPeriodicallyIntervalSeconds": 120,
+                "shouldFlushAtQueueMemSize": false,
+                "shouldFlushAtQueueSize": true,
+                "shouldFlushPeriodically": true,
+                "shouldSendPeriodicEvents": false,
+                "periodicEventIntervalSeconds": 120
+            },
+            "serverTime": 1614303201,
+            "eventDefGroups": [],
+            "eventDefGroupCount": 0
+        },
+        {
+            "configDefId": "c67838ce352127ffaad679dfbc046477",
+            "name": "1 Common - Internal",
+            "type": "internal",
+            "properties": {
+                "maxBufferBytes": 4096,
+                "flushAtQueueMemSizeBytes": 0,
+                "flushAtQueueSize": 500,
+                "flushPeriodicallyIntervalSeconds": 120,
+                "shouldFlushAtQueueMemSize": false,
+                "shouldFlushAtQueueSize": true,
+                "shouldFlushPeriodically": true,
+                "shouldSendPeriodicEvents": false,
+                "periodicEventIntervalSeconds": 120
+            },
+            "serverTime": 1614303201,
+            "eventDefGroups": [
+                {
+                    "eventDefGroupId": "ec3b0e21f865653d854cd82bda038e18",
+                    "version": 10,
+                    "status": 1,
+                    "eventDefs": [],
+                    "eventDefCount": 0
+                }
+            ],
+            "eventDefGroupCount": 1
+        },
+        {
+            "configDefId": "517eb7d4be2220cf70e32f6d7ee187a1",
+            "name": "2 Evolve Retail (Steam)",
+            "type": "app",
+            "properties": {
+                "maxBufferBytes": 1024,
+                "flushAtQueueMemSizeBytes": 0,
+                "flushAtQueueSize": 500,
+                "flushPeriodicallyIntervalSeconds": 0,
+                "shouldFlushAtQueueMemSize": false,
+                "shouldFlushAtQueueSize": true,
+                "shouldFlushPeriodically": false,
+                "shouldSendPeriodicEvents": false,
+                "periodicEventIntervalSeconds": 120
+            },
+            "serverTime": 1614303201,
+            "eventDefGroups": [
+                {
+                    "eventDefGroupId": "144276004636fe3b937fc53b75f8a25a",
+                    "version": 1,
+                    "status": 1,
+                    "eventDefs": [],
+                    "eventDefCount": 0
+                }
+            ],
+            "eventDefGroupCount": 1
+        }
+    ]))
 }
 
-async fn grants_find() -> Json<Value> {
-    kando_ok(json!({"grants": []}))
+async fn grants_find(headers: axum::http::HeaderMap) -> Json<Value> {
+    let player_id = player_id_from_auth(&headers)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let grants_json = PINENUT_GRANTS.replace("__PLAYER_ID__", &player_id);
+    let items: Value = serde_json::from_str(&grants_json).unwrap_or(json!([]));
+    kando_ok_with_params(items, json!({"count": 468, "hasMore": false}))
 }
 
 async fn queue_waittime() -> Json<Value> {
@@ -874,6 +1035,21 @@ async fn queue_waittime() -> Json<Value> {
 
 async fn stub_ok() -> Json<Value> {
     kando_ok(json!({}))
+}
+
+async fn storage_list(Path(_dataset_id): Path<String>) -> Json<Value> {
+    kando_ok(json!({"items": []}))
+}
+
+async fn storage_put(
+    Path((_dataset_id, _key)): Path<(String, String)>,
+    _body: axum::body::Bytes,
+) -> StatusCode {
+    StatusCode::NO_CONTENT
+}
+
+async fn storage_delete(Path((_dataset_id, _key)): Path<(String, String)>) -> StatusCode {
+    StatusCode::NO_CONTENT
 }
 
 async fn apps_find(_body: axum::body::Bytes) -> Json<Value> {
