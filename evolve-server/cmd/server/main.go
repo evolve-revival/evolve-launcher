@@ -22,8 +22,14 @@ func main() {
 
 	r := buildRouterWithDeps(cfg, pool)
 
-	log.Printf("evolve-server listening on :%s", cfg.Port)
-	if err := r.Run(":" + cfg.Port); err != nil {
-		log.Fatalf("server: %v", err)
+	log.Printf("evolve-server listening on :%s (tls=%v)", cfg.Port, cfg.CertFile != "")
+	if cfg.CertFile != "" {
+		if err := r.RunTLS(":"+cfg.Port, cfg.CertFile, cfg.KeyFile); err != nil {
+			log.Fatalf("server: %v", err)
+		}
+	} else {
+		if err := r.Run(":" + cfg.Port); err != nil {
+			log.Fatalf("server: %v", err)
+		}
 	}
 }
