@@ -63,5 +63,8 @@ func buildRouterWithDeps(cfg config.Config, pool *sql.DB) *gin.Engine {
 	r.Any("/sessions/1/*path", stubs.Stub200)
 	r.Any("/news/1/*path", stubs.Stub200)
 
+	r.Any("/evolve/config/*path", stubs.Stub200)
+	r.NoRoute(stubs.Stub200)
+
 	return r
 }
